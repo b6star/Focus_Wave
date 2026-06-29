@@ -2,6 +2,7 @@ package com.yourssu.focuswave
 
 import android.app.Activity
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -9,7 +10,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.clickable
@@ -40,27 +40,30 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.ui.components.SoundMixerPanel
+import com.yourssu.focuswave.ui.fileshare.FileShareScreen
 import com.yourssu.focuswave.ui.sound.SoundPlaybackEffect
 import com.yourssu.focuswave.ui.state.SoundTrackId
 import com.yourssu.focuswave.ui.state.TimerPhase
 import com.yourssu.focuswave.ui.state.TimerUiState
 import com.yourssu.focuswave.ui.theme.FocusWaveTheme
 import com.yourssu.focuswave.ui.timer.TimerViewModel
-import android.view.WindowManager
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.ui.platform.LocalContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -76,10 +79,12 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainScreen(
-    timerViewModel: TimerViewModel = viewModel()
+    timerViewModel: TimerViewModel = viewModel(),
+    fileServerManager: FileServerManager = viewModel()
 ) {
     val uiState by timerViewModel.uiState.collectAsState()
-
+    val fileShareUiState by fileServerManager.uiState.collectAsState()
+    var showFileShare by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -94,16 +99,28 @@ fun MainScreen(
         }
     }
 
-    MainScreenContent(
-        uiState = uiState,
-        onStartClick = timerViewModel::startTimer,
-        onPauseClick = timerViewModel::pauseTimer,
-        onResetClick = timerViewModel::resetTimer,
-        onNewPathClick = timerViewModel::increasePathSeed,
-        timerViewModel = timerViewModel,
-        onSoundEnabledChange = timerViewModel::setSoundEnabled,
-        onSoundVolumeChange = timerViewModel::setSoundVolume
-    )
+    Box(modifier = Modifier.fillMaxSize()) {
+        MainScreenContent(
+            uiState = uiState,
+            onStartClick = timerViewModel::startTimer,
+            onPauseClick = timerViewModel::pauseTimer,
+            onResetClick = timerViewModel::resetTimer,
+            onNewPathClick = timerViewModel::increasePathSeed,
+            onFileShareClick = { showFileShare = true },
+            timerViewModel = timerViewModel,
+            onSoundEnabledChange = timerViewModel::setSoundEnabled,
+            onSoundVolumeChange = timerViewModel::setSoundVolume
+        )
+
+        if (showFileShare) {
+            FileShareScreen(
+                uiState = fileShareUiState,
+                onStartClick = fileServerManager::startServer,
+                onStopClick = fileServerManager::stopServer,
+                onBackClick = { showFileShare = false }
+            )
+        }
+    }
 }
 
 @Composable
@@ -113,6 +130,7 @@ private fun MainScreenContent(
     onPauseClick: () -> Unit,
     onResetClick: () -> Unit,
     onNewPathClick: () -> Unit,
+    onFileShareClick: () -> Unit,
     timerViewModel: TimerViewModel,
     onSoundEnabledChange: (SoundTrackId, Boolean) -> Unit,
     onSoundVolumeChange: (SoundTrackId, Float) -> Unit
@@ -134,6 +152,7 @@ private fun MainScreenContent(
                 onPauseClick = onPauseClick,
                 onResetClick = onResetClick,
                 onNewPathClick = onNewPathClick,
+                onFileShareClick = onFileShareClick,
                 onDecreaseFocus = timerViewModel::decreaseFocusMinutes,
                 onIncreaseFocus = timerViewModel::increaseFocusMinutes,
                 onDecreaseBreak = timerViewModel::decreaseBreakMinutes,
@@ -230,6 +249,7 @@ private fun TimerControlsPanel(
     onPauseClick: () -> Unit,
     onResetClick: () -> Unit,
     onNewPathClick: () -> Unit,
+    onFileShareClick: () -> Unit,
     onDecreaseFocus: () -> Unit,
     onIncreaseFocus: () -> Unit,
     onDecreaseBreak: () -> Unit,
@@ -274,11 +294,19 @@ private fun TimerControlsPanel(
                 )
             }
 
-            Text(
-                text = uiState.activePhase.name,
-                color = Color.White.copy(alpha = 0.78f),
-                style = MaterialTheme.typography.labelMedium
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = uiState.activePhase.name,
+                    color = Color.White.copy(alpha = 0.78f),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Text(
+                    text = "LOCAL SHARE",
+                    modifier = Modifier.clickable(onClick = onFileShareClick),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
         }
 
         LinearProgressIndicator(
@@ -562,6 +590,7 @@ fun MainScreenPreview() {
                     onPauseClick = {},
                     onResetClick = {},
                     onNewPathClick = {},
+                    onFileShareClick = {},
                     onIncreaseBreak = {},
                     onIncreaseFocus = {},
                     onDecreaseFocus = {},
