@@ -24,10 +24,12 @@ import androidx.compose.ui.unit.dp
 import java.net.InetAddress
 import java.nio.ByteOrder
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import kotlinx.coroutines.launch
+import kotlin.random.Random
 
 
 data class SharedFileUi(
@@ -48,6 +50,12 @@ fun FileShareOverlay(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+
+    // 다른 사람의 접근을 막는 일회성 인증 코드
+    // TODO : 백엔드 서버에서 코드 생성, 검증, ui에 전달하는 로직으로 변경
+    var connectionCode by remember {
+        mutableStateOf(generateConnectionCode())
+    }
 
     var receivedFiles by remember {
         mutableStateOf<List<SharedFileUi>>(emptyList())
@@ -102,8 +110,12 @@ fun FileShareOverlay(
 
             PcAccessInfoCard(
                 pcAccessUrl = pcAccessUrl,
+                connectionCode = connectionCode,
                 onCopyClick = {
                     clipboardManager.setText(AnnotatedString(pcAccessUrl))
+                },
+                onRegenerateCodeClick = {
+                    connectionCode = generateConnectionCode()
                 }
             )
 
@@ -403,17 +415,18 @@ private fun SectionCard(
 @Composable
 private fun PcAccessInfoCard(
     pcAccessUrl: String,
-    onCopyClick: () -> Unit
+    connectionCode: String,
+    onCopyClick: () -> Unit,
+    onRegenerateCodeClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(horizontal = 12.dp, vertical = 12.dp)
     ) {
         Text(
-            text = "PC 접속 주소",
+            text = "PC 접속 정보",
             color = Color.White,
             style = MaterialTheme.typography.titleSmall
         )
@@ -428,8 +441,36 @@ private fun PcAccessInfoCard(
             style = MaterialTheme.typography.titleMedium
         )
 
+        Row(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "인증 코드",
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Text(
+                text = connectionCode,
+                color = Color(0xFFFFD700),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                text = "재발급",
+                color = Color(0xFF8A86E6),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.clickable {
+                    onRegenerateCodeClick()
+                }
+
+            )
+        }
+
         Text(
-            text = "PC 브라우저에서 위 주소로 접속하면 파일 공유 페이지가 열립니다.",
+            text = "PC 브라우저에서 주소로 접속한 뒤 위 4자리 코드를 입력하세요.",
             color = Color.White.copy(alpha = 0.65f),
             style = MaterialTheme.typography.bodySmall
         )
@@ -539,4 +580,10 @@ private fun android.content.Context.getPhoneIpAddress(): String {
     return InetAddress.getByAddress(
         java.math.BigInteger.valueOf(fixedIpAddress.toLong()).toByteArray()
     ).hostAddress ?: ""
+}
+
+
+// TODO : 백엔드 서버에서 코드 재발급요청하는 것으로 변경
+private fun generateConnectionCode(): String {
+    return Random.nextInt(1000, 10000).toString()
 }
