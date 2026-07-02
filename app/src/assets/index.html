@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FocusWave - 우주 정거장 (PC 연결)</title>
+    <title>FocusWave - 파일공유</title>
     <style>
         body {
             background-color: #1E1E2E;
@@ -15,8 +15,16 @@
             flex-direction: column;
             align-items: center;
         }
+
         h1 { color: #8A86E6; }
-        .container { display: flex; gap: 20px; width: 100%; max-width: 800px; }
+
+        .container {
+            display: none;
+            gap: 20px;
+            width: 100%;
+            max-width: 800px;
+        }
+
         .card {
             background-color: rgba(255, 255, 255, 0.05);
             border-radius: 16px;
@@ -24,175 +32,371 @@
             flex: 1;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
+
         button {
-            background-color: #E68A86; color: white; border: none; padding: 12px 24px;
-            border-radius: 8px; font-weight: bold; cursor: pointer; margin-top: 10px; width: 100%;
+            background-color: #E68A86;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-top: 10px;
+            width: 100%;
         }
+
         button:hover { background-color: #d87b77; }
-        input[type="file"] { margin-bottom: 10px; color: #ccc; }
-        ul { list-style: none; padding: 0; }
-        li {
-            background-color: rgba(0, 0, 0, 0.2); margin-bottom: 8px; padding: 12px;
-            border-radius: 8px; display: flex; justify-content: space-between; align-items: center;
+
+        input[type="file"] {
+            margin-bottom: 10px;
+            color: #ccc;
         }
-        a { color: #8A86E6; text-decoration: none; font-weight: bold; cursor: pointer; }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border-radius: 8px;
+            border: none;
+            box-sizing: border-box;
+            font-size: 18px;
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        li {
+            background-color: rgba(0, 0, 0, 0.2);
+            margin-bottom: 8px;
+            padding: 12px;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        a {
+            color: #8A86E6;
+            text-decoration: none;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
         a:hover { text-decoration: underline; }
-        .checkbox-label { display: flex; align-items: center; gap: 10px; cursor: pointer; }
-        .action-bar { display: flex; justify-content: space-between; align-items: center; margin: 15px 0 10px 0; }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+        }
+
+        .action-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 15px 0 10px 0;
+        }
+
+        #authCard {
+            max-width: 360px;
+            width: 100%;
+            margin-bottom: 20px;
+        }
+
+        #authStatus,
+        #uploadStatus {
+            font-size: 12px;
+            color: #E68A86;
+        }
     </style>
 </head>
 <body>
 
-    <h1>🚀 Focus Wave 파일공유</h1>
-    <p id="connectionStatus" style="font-size: 18px; font-weight: bold; color: #FFD700;">🟡 폰과 연결 확인 중...</p>
+<h1>🚀 Focus Wave 파일공유</h1>
 
-    <div class="container">
-        <!-- 1. 파일 다중 업로드 영역 (PC -> 폰) -->
-        <div class="card">
-            <h2>💻 PC ➡️ 📱 폰</h2>
-            <p>폰으로 보낼 파일(들)을 여러 개 선택할 수 있습니다.</p>
-            <!-- multiple 속성 추가, name은 약속한 'files' -->
-            <input type="file" id="fileInput" name="files" multiple>
-            <button onclick="uploadFile()">🚀 폰으로 발사</button>
-            <p id="uploadStatus" style="font-size: 12px; color: #E68A86;"></p>
-        </div>
+<p id="connectionStatus" style="font-size: 18px; font-weight: bold; color: #FFD700;">
+    🟡 폰과 연결 확인 중...
+</p>
 
-        <!-- 2. 파일 다중 다운로드 영역 (폰 -> PC) -->
-        <div class="card">
-            <h2>📱 폰 ➡️ 💻 PC</h2>
-            <p>현재 폰에 저장된 파일 목록입니다.</p>
-            <button onclick="fetchFileList()" style="background-color: #8A86E6;">🔄 목록 새로고침</button>
-            
-            <div class="action-bar">
-                <label class="checkbox-label">
-                    <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> 전체 선택
-                </label>
-                <button onclick="downloadSelected()" style="width: auto; margin-top: 0; padding: 8px 16px;">선택 다운로드 ⬇️</button>
-            </div>
-            
-            <ul id="fileList">
-                <li>아직 불러온 파일이 없습니다.</li>
-            </ul>
-        </div>
+<div id="authCard" class="card">
+    <h2>🔐 인증 코드 입력</h2>
+    <p>폰 화면에 표시된 4자리 인증 코드를 입력하세요.</p>
+
+    <input
+            type="text"
+            id="authCodeInput"
+            maxlength="4"
+            inputmode="numeric"
+            placeholder="예: 1234"
+    >
+
+    <button onclick="verifyCode()">접속하기</button>
+    <p id="authStatus"></p>
+</div>
+
+<div class="container" id="fileShareContainer">
+    <div class="card">
+        <h2>💻 PC ➡️ 📱 폰</h2>
+        <p>폰으로 보낼 파일을 여러 개 선택할 수 있습니다.</p>
+
+        <input type="file" id="fileInput" name="files" multiple>
+        <button onclick="uploadFile()">🚀 폰으로 전송</button>
+        <p id="uploadStatus"></p>
     </div>
 
-    <script>
-        // [API 2] 다중 파일 업로드
-        async function uploadFile() {
-            const fileInput = document.getElementById('fileInput');
-            const statusText = document.getElementById('uploadStatus');
+    <div class="card">
+        <h2>📱 폰 ➡️ 💻 PC</h2>
+        <p>현재 폰에서 공유 중인 파일 목록입니다.</p>
 
-            if (fileInput.files.length === 0) {
-                alert("파일을 먼저 선택해주세요!");
-                return;
-            }
+        <button onclick="fetchFileList()" style="background-color: #8A86E6;">
+            🔄 목록 새로고침
+        </button>
 
-            const formData = new FormData();
-            for (let i = 0; i < fileInput.files.length; i++) {
-                formData.append("files", fileInput.files[i]); 
-            }
+        <div class="action-bar">
+            <label class="checkbox-label">
+                <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> 전체 선택
+            </label>
 
-            statusText.innerText = "전송 중...";
+            <button onclick="downloadSelected()" style="width: auto; margin-top: 0; padding: 8px 16px;">
+                선택 다운로드 ⬇️
+            </button>
+        </div>
 
-            try {
-                const response = await fetch('/upload', { method: 'POST', body: formData });
-                if (response.ok) {
-                    statusText.innerText = `${fileInput.files.length}개 파일 전송 성공!`;
-                    fileInput.value = "";
-                    fetchFileList();
-                } else {
-                    statusText.innerText = "전송 실패 (서버 에러)";
-                }
-            } catch (error) {
-                statusText.innerText = "서버에 연결할 수 없습니다.";
-                console.error(error);
-            }
+        <ul id="fileList">
+            <li>아직 불러온 파일이 없습니다.</li>
+        </ul>
+    </div>
+</div>
+
+<script>
+    let isAuthenticated = false;
+
+    async function verifyCode() {
+        const codeInput = document.getElementById('authCodeInput');
+        const authStatus = document.getElementById('authStatus');
+        const authCard = document.getElementById('authCard');
+        const fileShareContainer = document.getElementById('fileShareContainer');
+
+        const code = codeInput.value.trim();
+
+        if (code.length !== 4) {
+            authStatus.innerText = "4자리 인증 코드를 입력해주세요.";
+            return;
         }
 
-        // 전체 선택 토글
-        function toggleSelectAll() {
-            const selectAllCheckbox = document.getElementById('selectAll');
-            const checkboxes = document.querySelectorAll('.file-checkbox');
-            checkboxes.forEach(cb => cb.checked = selectAllCheckbox.checked);
-        }
+        authStatus.innerText = "인증 중...";
 
-        // [API 3] 다중 다운로드 (0.3초 간격 순차 다운로드)
-        function downloadSelected() {
-            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-            if (checkboxes.length === 0) { alert("다운로드할 파일을 체크해주세요!"); return; }
-
-            checkboxes.forEach((cb, index) => {
-                setTimeout(() => {
-                    const a = document.createElement('a');
-                    a.href = `/download/${encodeURIComponent(cb.value)}`;
-                    a.download = cb.value;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                }, index * 300); 
+        try {
+            const response = await fetch('/auth', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ code: code })
             });
+
+            if (response.ok) {
+                isAuthenticated = true;
+                authCard.style.display = "none";
+                fileShareContainer.style.display = "flex";
+                fetchFileList();
+            } else if (response.status === 401 || response.status === 403) {
+                authStatus.innerText = "인증 코드가 올바르지 않습니다.";
+            } else {
+                authStatus.innerText = "인증 실패: 서버 오류";
+            }
+        } catch (error) {
+            authStatus.innerText = "서버에 연결할 수 없습니다.";
+            console.error(error);
+        }
+    }
+
+    async function uploadFile() {
+        if (!isAuthenticated) {
+            alert("먼저 인증 코드를 입력해주세요.");
+            return;
         }
 
-        // [API 4] 파일 목록 가져오기
-        async function fetchFileList() {
-            const listElement = document.getElementById('fileList');
-            const selectAllCheckbox = document.getElementById('selectAll');
-            listElement.innerHTML = "<li>로딩 중...</li>";
-            if (selectAllCheckbox) selectAllCheckbox.checked = false;
+        const fileInput = document.getElementById('fileInput');
+        const statusText = document.getElementById('uploadStatus');
 
-            try {
-                const response = await fetch('/list');
-                if (response.ok) {
-                    const files = await response.json(); 
-                    listElement.innerHTML = ""; 
-                    if (files.length === 0) { listElement.innerHTML = "<li>폰에 파일이 없습니다.</li>"; return; }
+        if (fileInput.files.length === 0) {
+            alert("파일을 먼저 선택해주세요!");
+            return;
+        }
 
-                    files.forEach(fileName => {
-                        const li = document.createElement('li');
-                        const label = document.createElement('label');
-                        label.className = "checkbox-label";
-                        const checkbox = document.createElement('input');
-                        checkbox.type = "checkbox"; checkbox.className = "file-checkbox"; checkbox.value = fileName;
-                        label.appendChild(checkbox);
-                        label.appendChild(document.createTextNode(" " + fileName));
-                        
-                        const downloadBtn = document.createElement('a');
-                        downloadBtn.href = `/download/${encodeURIComponent(fileName)}`;
-                        downloadBtn.textContent = "다운로드 ⬇️";
-                        downloadBtn.download = fileName; 
+        const formData = new FormData();
 
-                        li.appendChild(label); li.appendChild(downloadBtn); listElement.appendChild(li);
-                    });
+        for (let i = 0; i < fileInput.files.length; i++) {
+            formData.append("files", fileInput.files[i]);
+        }
+
+        statusText.innerText = "전송 중...";
+
+        try {
+            const response = await fetch('/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (response.ok) {
+                statusText.innerText = `${fileInput.files.length}개 파일 전송 성공!`;
+                fileInput.value = "";
+                fetchFileList();
+            } else if (response.status === 401 || response.status === 403) {
+                statusText.innerText = "인증이 만료되었거나 권한이 없습니다.";
+                resetAuth();
+            } else {
+                statusText.innerText = "전송 실패: 서버 에러";
+            }
+        } catch (error) {
+            statusText.innerText = "서버에 연결할 수 없습니다.";
+            console.error(error);
+        }
+    }
+
+    function toggleSelectAll() {
+        const selectAllCheckbox = document.getElementById('selectAll');
+        const checkboxes = document.querySelectorAll('.file-checkbox');
+
+        checkboxes.forEach(cb => {
+            cb.checked = selectAllCheckbox.checked;
+        });
+    }
+
+    function downloadSelected() {
+        if (!isAuthenticated) {
+            alert("먼저 인증 코드를 입력해주세요.");
+            return;
+        }
+
+        const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+
+        if (checkboxes.length === 0) {
+            alert("다운로드할 파일을 체크해주세요!");
+            return;
+        }
+
+        checkboxes.forEach((cb, index) => {
+            setTimeout(() => {
+                const a = document.createElement('a');
+                a.href = `/download/${encodeURIComponent(cb.value)}`;
+                a.download = cb.value;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }, index * 300);
+        });
+    }
+
+    async function fetchFileList() {
+        if (!isAuthenticated) {
+            return;
+        }
+
+        const listElement = document.getElementById('fileList');
+        const selectAllCheckbox = document.getElementById('selectAll');
+
+        listElement.innerHTML = "<li>로딩 중...</li>";
+
+        if (selectAllCheckbox) {
+            selectAllCheckbox.checked = false;
+        }
+
+        try {
+            const response = await fetch('/list');
+
+            if (response.ok) {
+                const files = await response.json();
+                listElement.innerHTML = "";
+
+                if (files.length === 0) {
+                    listElement.innerHTML = "<li>폰에 공유 중인 파일이 없습니다.</li>";
+                    return;
                 }
-            } catch (error) {
-                listElement.innerHTML = "<li>서버(폰)에서 목록을 가져올 수 없습니다.</li>";
+
+                files.forEach(fileName => {
+                    const li = document.createElement('li');
+
+                    const label = document.createElement('label');
+                    label.className = "checkbox-label";
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = "checkbox";
+                    checkbox.className = "file-checkbox";
+                    checkbox.value = fileName;
+
+                    label.appendChild(checkbox);
+                    label.appendChild(document.createTextNode(" " + fileName));
+
+                    const downloadBtn = document.createElement('a');
+                    downloadBtn.href = `/download/${encodeURIComponent(fileName)}`;
+                    downloadBtn.textContent = "다운로드 ⬇️";
+                    downloadBtn.download = fileName;
+
+                    li.appendChild(label);
+                    li.appendChild(downloadBtn);
+                    listElement.appendChild(li);
+                });
+            } else if (response.status === 401 || response.status === 403) {
+                listElement.innerHTML = "<li>인증이 만료되었거나 권한이 없습니다.</li>";
+                resetAuth();
+            } else {
+                listElement.innerHTML = "<li>파일 목록을 가져오지 못했습니다.</li>";
             }
+        } catch (error) {
+            listElement.innerHTML = "<li>서버(폰)에서 목록을 가져올 수 없습니다.</li>";
+            console.error(error);
         }
+    }
 
-        // [API 5] 하트비트 (3초마다 서버 생존 확인)
-        async function checkConnection() {
-            const statusElement = document.getElementById('connectionStatus');
-            // 🌟 IP 주소를 못 가져올 때를 대비해 기본값 지정
-            const ipAddress = window.location.hostname || "로컬"; 
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 2000);
-                const response = await fetch('/ping', { signal: controller.signal });
-                clearTimeout(timeoutId);
+    async function checkConnection() {
+        const statusElement = document.getElementById('connectionStatus');
+        const ipAddress = window.location.hostname || "로컬";
 
-                if (response.ok) {
-                    statusElement.innerHTML = `🟢 폰(${ipAddress})과 정상적으로 연결됨`;
-                    statusElement.style.color = "#4CAF50";
-                } else { throw new Error("서버 응답 오류"); }
-            } catch (error) {
-                statusElement.innerHTML = `🔴 폰(${ipAddress})과 연결이 끊어졌습니다!`;
-                statusElement.style.color = "#F44336";
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+            const response = await fetch('/ping', {
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+                statusElement.innerHTML = `🟢 폰(${ipAddress})과 정상적으로 연결됨`;
+                statusElement.style.color = "#4CAF50";
+            } else {
+                throw new Error("서버 응답 오류");
             }
+        } catch (error) {
+            statusElement.innerHTML = `🔴 폰(${ipAddress})과 연결이 끊어졌습니다!`;
+            statusElement.style.color = "#F44336";
         }
+    }
 
-        checkConnection();
-        setInterval(checkConnection, 3000);
-        fetchFileList();
-    </script>
+    function resetAuth() {
+        isAuthenticated = false;
+
+        document.getElementById('authCard').style.display = "block";
+        document.getElementById('fileShareContainer').style.display = "none";
+        document.getElementById('authCodeInput').value = "";
+        document.getElementById('authStatus').innerText = "다시 인증해주세요.";
+    }
+
+    document.getElementById('authCodeInput').addEventListener('keyup', function(event) {
+        if (event.key === "Enter") {
+            verifyCode();
+        }
+    });
+
+    checkConnection();
+    setInterval(checkConnection, 3000);
+</script>
 </body>
 </html>
