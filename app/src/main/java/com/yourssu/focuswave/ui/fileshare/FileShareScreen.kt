@@ -1,7 +1,6 @@
 package com.yourssu.focuswave.ui.fileshare
 
 import android.net.Uri
-import android.net.wifi.WifiManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -21,15 +20,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import java.net.InetAddress
-import java.nio.ByteOrder
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import com.yourssu.focuswave.server.FileShareUiState
 import kotlinx.coroutines.launch
-import kotlin.random.Random
 
 
 data class SharedFileUi(
@@ -46,16 +42,13 @@ data class SharedFileUi(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FileShareOverlay(
+    uiState: FileShareUiState,
+    onStartClick: () -> Unit,
+    onStopClick: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-
-    // 다른 사람의 접근을 막는 일회성 인증 코드
-    // TODO : 백엔드 서버에서 코드 생성, 검증, ui에 전달하는 로직으로 변경
-    var connectionCode by remember {
-        mutableStateOf(generateConnectionCode())
-    }
 
     var receivedFiles by remember {
         mutableStateOf<List<SharedFileUi>>(emptyList())
@@ -77,11 +70,7 @@ fun FileShareOverlay(
     }
 
     val clipboardManager = LocalClipboardManager.current
-    val serverPort = 8080 // TODO: 백엔드 팀원이 실제 포트로 바꾸기
-    val phoneIpAddress = remember { context.getPhoneIpAddress() }
-    val pcAccessUrl = remember(phoneIpAddress, serverPort) {
-        if (phoneIpAddress.isBlank()) "" else "http://$phoneIpAddress:$serverPort"
-    }
+    val pcAccessUrl = uiState.serverAddress.orEmpty()
 
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
@@ -106,16 +95,16 @@ fun FileShareOverlay(
         ) {
             HeaderSection(onDismiss = onDismiss)
 
-            ConnectionStatusCard()
+            ConnectionStatusCard(
+                uiState = uiState,
+                onStartClick = onStartClick,
+                onStopClick = onStopClick
+            )
 
             PcAccessInfoCard(
                 pcAccessUrl = pcAccessUrl,
-                connectionCode = connectionCode,
                 onCopyClick = {
                     clipboardManager.setText(AnnotatedString(pcAccessUrl))
-                },
-                onRegenerateCodeClick = {
-                    connectionCode = generateConnectionCode()
                 }
             )
 
@@ -246,19 +235,55 @@ private fun HeaderSection(
 }
 
 @Composable
-private fun ConnectionStatusCard() {
-    Row(
+private fun ConnectionStatusCard(
+    uiState: FileShareUiState,
+    onStartClick: () -> Unit,
+    onStopClick: () -> Unit
+) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
             .padding(14.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text(
-            text = "🟡 연결 확인 대기 중",
-            color = Color(0xFFFFD700),
+            text = uiState.statusText,
+            color = if (uiState.isRunning) Color(0xFF8BE9A8) else Color(0xFFFFD700),
             style = MaterialTheme.typography.bodyMedium
         )
+        Text(
+            text = uiState.addressHint,
+            color = Color.White.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.bodySmall
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Button(
+                onClick = onStartClick,
+                enabled = !uiState.isRunning,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("서버 시작")
+            }
+            Button(
+                onClick = onStopClick,
+                enabled = uiState.isRunning,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E3B46))
+            ) {
+                Text("서버 중지")
+            }
+        }
+        uiState.errorMessage?.let { message ->
+            Text(
+                text = message,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
     }
 }
 
@@ -415,9 +440,7 @@ private fun SectionCard(
 @Composable
 private fun PcAccessInfoCard(
     pcAccessUrl: String,
-    connectionCode: String,
-    onCopyClick: () -> Unit,
-    onRegenerateCodeClick: () -> Unit
+    onCopyClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -431,46 +454,30 @@ private fun PcAccessInfoCard(
             style = MaterialTheme.typography.titleSmall
         )
 
-        Text(
-            text = if (pcAccessUrl.isBlank()) {
-                "Wi-Fi 연결을 확인해주세요."
-            } else {
-                pcAccessUrl
-            },
-            color = Color(0xFF8A86E6),
-            style = MaterialTheme.typography.titleMedium
-        )
-
         Row(
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "인증 코드",
-                color = Color.White,
-                style = MaterialTheme.typography.bodyMedium
-            )
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Text(
-                text = connectionCode,
-                color = Color(0xFFFFD700),
+                text = if (pcAccessUrl.isBlank()) {
+                    "서버를 시작하면 접속 주소가 표시됩니다."
+                } else {
+                    pcAccessUrl
+                },
+                modifier = Modifier.weight(1f),
+                color = Color(0xFF8A86E6),
                 style = MaterialTheme.typography.titleMedium
             )
-            Spacer(modifier = Modifier.width(16.dp))
-            Text(
-                text = "재발급",
-                color = Color(0xFF8A86E6),
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.clickable {
-                    onRegenerateCodeClick()
-                }
-
-            )
+            TextButton(
+                onClick = onCopyClick,
+                enabled = pcAccessUrl.isNotBlank()
+            ) {
+                Text("복사")
+            }
         }
 
         Text(
-            text = "PC 브라우저에서 주소로 접속한 뒤 위 4자리 코드를 입력하세요.",
+            text = "PC 브라우저에서 같은 Wi-Fi의 위 주소로 접속하세요.",
             color = Color.White.copy(alpha = 0.65f),
             style = MaterialTheme.typography.bodySmall
         )
@@ -563,27 +570,4 @@ fun Long.toFileSizeText(): String {
         this >= 1024 -> "%.1f KB".format(this / 1024.0)
         else -> "$this B"
     }
-}
-
-private fun android.content.Context.getPhoneIpAddress(): String {
-    val wifiManager = applicationContext.getSystemService(android.content.Context.WIFI_SERVICE) as WifiManager
-    val ipAddress = wifiManager.connectionInfo.ipAddress
-
-    if (ipAddress == 0) return ""
-
-    val fixedIpAddress = if (ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN) {
-        Integer.reverseBytes(ipAddress)
-    } else {
-        ipAddress
-    }
-
-    return InetAddress.getByAddress(
-        java.math.BigInteger.valueOf(fixedIpAddress.toLong()).toByteArray()
-    ).hostAddress ?: ""
-}
-
-
-// TODO : 백엔드 서버에서 코드 재발급요청하는 것으로 변경
-private fun generateConnectionCode(): String {
-    return Random.nextInt(1000, 10000).toString()
 }

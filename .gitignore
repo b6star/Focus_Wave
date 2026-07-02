@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Local Firebase configuration is not part of this project anymore.
+app/google-services.json

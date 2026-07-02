@@ -37,9 +37,16 @@ android {
     buildFeatures {
         compose = true
     }
+    sourceSets {
+        getByName("main") {
+            assets.directories.add("src/assets")
+        }
+    }
 }
 
 dependencies {
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
+
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
