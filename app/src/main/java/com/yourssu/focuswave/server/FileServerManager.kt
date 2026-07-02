@@ -20,7 +20,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     fun startServer() {
         if (server != null) return
 
-        val newServer = LocalFileServer()
+        val newServer = LocalFileServer(getApplication<Application>().filesDir)
         try {
             newServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
             server = newServer
