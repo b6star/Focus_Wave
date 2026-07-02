@@ -4,11 +4,13 @@ import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.Socket
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -21,17 +23,125 @@ class LocalFileServerTest {
 
     private lateinit var server: LocalFileServer
     private lateinit var baseUrl: String
+    private lateinit var authToken: String
+    private lateinit var authCookie: String
 
     @Before
     fun setUp() {
-        server = LocalFileServer(temporaryFolder.root, 0)
+        server = LocalFileServer(
+            appFilesDirectory = temporaryFolder.root,
+            port = 0,
+            authCode = AUTH_CODE,
+            homePage = TEST_HOME_PAGE
+        )
         server.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
         baseUrl = "http://127.0.0.1:${server.listeningPort}"
+        val authResponse = authenticate(AUTH_CODE)
+        authToken = TOKEN_PATTERN.find(authResponse.body)?.groupValues?.get(1)
+            ?: error("Authentication token was not returned")
+        authCookie = authResponse.headers.entries
+            .firstOrNull { it.key.equals("Set-Cookie", ignoreCase = true) }
+            ?.value
+            ?.firstOrNull()
+            ?.substringBefore(';')
+            ?: error("Authentication cookie was not returned")
     }
 
     @After
     fun tearDown() {
         server.stop()
+    }
+
+    @Test
+    fun auth_withCorrectCode_returnsTokenAndCookie() {
+        val response = authenticate(AUTH_CODE)
+        val token = TOKEN_PATTERN.find(response.body)?.groupValues?.get(1).orEmpty()
+
+        assertEquals(HttpURLConnection.HTTP_OK, response.statusCode)
+        assertTrue(response.body.contains(""""success":true"""))
+        assertTrue(token.length >= 32)
+        assertTrue(
+            response.headers.entries
+                .firstOrNull { it.key.equals("Set-Cookie", ignoreCase = true) }
+                ?.value
+                ?.any { it.startsWith("FocusWave-Token=$token") } == true
+        )
+    }
+
+    @Test
+    fun auth_withWrongCode_returnsUnauthorized() {
+        val response = authenticateRaw("9999")
+
+        assertEquals(HttpURLConnection.HTTP_UNAUTHORIZED, response.statusCode)
+        assertEquals(
+            """{"success":false,"message":"Invalid authentication code"}""",
+            response.body
+        )
+    }
+
+    @Test
+    fun auth_issuesDifferentTokens() {
+        val firstToken = TOKEN_PATTERN.find(authenticate(AUTH_CODE).body)?.groupValues?.get(1)
+        val secondToken = TOKEN_PATTERN.find(authenticate(AUTH_CODE).body)?.groupValues?.get(1)
+
+        assertNotEquals(firstToken, secondToken)
+    }
+
+    @Test
+    fun token_isInvalidAfterServerRestart() {
+        val previousToken = authToken
+        server.stop()
+        server = LocalFileServer(
+            appFilesDirectory = temporaryFolder.root,
+            port = 0,
+            authCode = AUTH_CODE,
+            homePage = TEST_HOME_PAGE
+        )
+        server.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
+        baseUrl = "http://127.0.0.1:${server.listeningPort}"
+
+        val response = get("/list", token = previousToken)
+
+        assertEquals(HttpURLConnection.HTTP_UNAUTHORIZED, response.statusCode)
+    }
+
+    @Test
+    fun upload_withoutToken_returnsUnauthorized() {
+        val response = upload("blocked.txt", "blocked".toByteArray(), token = null)
+
+        assertEquals(HttpURLConnection.HTTP_UNAUTHORIZED, response.statusCode)
+        assertFalse(sharedFile("blocked.txt").exists())
+    }
+
+    @Test
+    fun list_withoutToken_returnsUnauthorized() {
+        val response = get("/list")
+
+        assertEquals(HttpURLConnection.HTTP_UNAUTHORIZED, response.statusCode)
+        assertTrue(response.body.contains("Authentication required"))
+    }
+
+    @Test
+    fun list_withCookieFromAuth_returnsOk() {
+        val response = get("/list", cookie = authCookie)
+
+        assertEquals(HttpURLConnection.HTTP_OK, response.statusCode)
+        assertEquals("[]", response.body)
+    }
+
+    @Test
+    fun list_withCustomTokenHeader_returnsOk() {
+        val response = get("/list", token = authToken, useCustomHeader = true)
+
+        assertEquals(HttpURLConnection.HTTP_OK, response.statusCode)
+    }
+
+    @Test
+    fun root_servesProvidedHomePage() {
+        val response = get("/")
+
+        assertEquals(HttpURLConnection.HTTP_OK, response.statusCode)
+        assertEquals(TEST_HOME_PAGE, response.body)
     }
 
     @Test
@@ -71,6 +181,7 @@ class LocalFileServerTest {
             requestMethod = "POST"
             doOutput = true
             setRequestProperty("Content-Type", "text/plain")
+            setRequestProperty("Authorization", "Bearer $authToken")
         }
         connection.outputStream.use { it.write("not multipart".toByteArray()) }
 
@@ -80,7 +191,67 @@ class LocalFileServerTest {
         assertTrue(response.body.contains("\"success\":false"))
     }
 
-    private fun upload(fileName: String, content: ByteArray): HttpResponse {
+    private fun authenticate(code: String): HttpResponse {
+        val body = """{"code":"$code"}""".toByteArray(StandardCharsets.UTF_8)
+        val connection = (URL("$baseUrl/auth").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            setFixedLengthStreamingMode(body.size)
+            setRequestProperty("Content-Type", "application/json")
+        }
+        connection.outputStream.use { it.write(body) }
+        return readResponse(connection)
+    }
+
+    private fun authenticateRaw(code: String): HttpResponse {
+        val body = """{"code":"$code"}"""
+        val rawResponse = Socket("127.0.0.1", server.listeningPort).use { socket ->
+            val request = buildString {
+                append("POST /auth HTTP/1.1\r\n")
+                append("Host: 127.0.0.1\r\n")
+                append("Content-Type: application/json\r\n")
+                append("Content-Length: ${body.toByteArray(StandardCharsets.UTF_8).size}\r\n")
+                append("Connection: close\r\n\r\n")
+                append(body)
+            }
+            val output = socket.getOutputStream()
+            output.write(request.toByteArray(StandardCharsets.UTF_8))
+            output.flush()
+            socket.getInputStream().bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+        }
+        val headerEnd = rawResponse.indexOf("\r\n\r\n")
+        val statusCode = rawResponse
+            .lineSequence()
+            .first()
+            .split(' ')[1]
+            .toInt()
+        val responseBody = if (headerEnd >= 0) rawResponse.substring(headerEnd + 4) else ""
+        return HttpResponse(statusCode, responseBody, emptyMap())
+    }
+
+    private fun get(
+        path: String,
+        token: String? = null,
+        cookie: String? = null,
+        useCustomHeader: Boolean = false
+    ): HttpResponse {
+        val connection = URL("$baseUrl$path").openConnection() as HttpURLConnection
+        token?.let {
+            if (useCustomHeader) {
+                connection.setRequestProperty("X-FocusWave-Token", it)
+            } else {
+                connection.setRequestProperty("Authorization", "Bearer $it")
+            }
+        }
+        cookie?.let { connection.setRequestProperty("Cookie", it) }
+        return readResponse(connection)
+    }
+
+    private fun upload(
+        fileName: String,
+        content: ByteArray,
+        token: String? = authToken
+    ): HttpResponse {
         val boundary = "----FocusWaveTestBoundary"
         val header = buildString {
             append("--$boundary\r\n")
@@ -100,6 +271,7 @@ class LocalFileServerTest {
             doOutput = true
             setFixedLengthStreamingMode(body.size)
             setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            token?.let { setRequestProperty("Authorization", "Bearer $it") }
         }
         connection.outputStream.use { it.write(body) }
         return readResponse(connection)
@@ -113,8 +285,11 @@ class LocalFileServerTest {
             connection.inputStream
         }
         val body = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+        val headers = connection.headerFields.entries
+            .filter { it.key != null }
+            .associate { it.key!! to it.value.orEmpty() }
         connection.disconnect()
-        return HttpResponse(statusCode, body)
+        return HttpResponse(statusCode, body, headers)
     }
 
     private fun sharedFile(name: String): File =
@@ -122,6 +297,13 @@ class LocalFileServerTest {
 
     private data class HttpResponse(
         val statusCode: Int,
-        val body: String
+        val body: String,
+        val headers: Map<String, List<String>>
     )
+
+    companion object {
+        private const val AUTH_CODE = "1234"
+        private const val TEST_HOME_PAGE = "<html><body>FocusWave test page</body></html>"
+        private val TOKEN_PATTERN = Regex(""""token":"([^"]+)"""")
+    }
 }

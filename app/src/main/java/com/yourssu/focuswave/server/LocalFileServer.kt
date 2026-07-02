@@ -3,31 +3,58 @@ package com.yourssu.focuswave.server
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.text.Normalizer
+import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
 
 class LocalFileServer(
     private val appFilesDirectory: File,
-    port: Int = PORT
+    port: Int = PORT,
+    private val authCode: String,
+    private val homePage: String? = null,
+    private val secureRandom: SecureRandom = SecureRandom()
 ) : NanoHTTPD(port) {
     private val fileSaveLock = Any()
+    private val activeTokens = ConcurrentHashMap.newKeySet<String>()
+
+    override fun stop() {
+        activeTokens.clear()
+        super.stop()
+    }
 
     override fun serve(session: IHTTPSession): Response {
         return when {
             session.uri == "/" && session.method == Method.GET -> newFixedLengthResponse(
                 Response.Status.OK,
                 "text/html; charset=utf-8",
-                HOME_PAGE
+                homePage ?: FALLBACK_HOME_PAGE
             )
 
-            session.uri == "/list" && session.method == Method.GET -> newFixedLengthResponse(
+            session.uri == "/ping" && session.method == Method.GET -> jsonResponse(
                 Response.Status.OK,
-                "application/json; charset=utf-8",
-                "[]"
+                """{"success":true}"""
             )
 
-            session.uri == "/upload" && session.method == Method.POST -> handleUpload(session)
+            session.uri == "/auth" && session.method == Method.POST -> handleAuth(session)
 
-            session.uri == "/upload" || session.method != Method.GET -> newFixedLengthResponse(
+            session.uri == "/list" -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.GET -> jsonResponse(Response.Status.OK, "[]")
+                else -> methodNotAllowedResponse()
+            }
+
+            session.uri == "/upload" -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.POST -> handleUpload(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            session.uri == "/auth" || session.uri == "/ping" || session.uri == "/" ->
+                methodNotAllowedResponse()
+
+            session.method != Method.GET -> newFixedLengthResponse(
                 Response.Status.METHOD_NOT_ALLOWED,
                 MIME_PLAINTEXT,
                 "Method not allowed"
@@ -40,6 +67,86 @@ class LocalFileServer(
             )
         }
     }
+
+    private fun handleAuth(session: IHTTPSession): Response {
+        val mediaType = session.headers["content-type"]
+            .orEmpty()
+            .substringBefore(';')
+            .trim()
+        if (!mediaType.equals("application/json", ignoreCase = true)) {
+            return jsonError(Response.Status.BAD_REQUEST, "Content-Type must be application/json")
+        }
+
+        val parsedBody = mutableMapOf<String, String>()
+        try {
+            session.parseBody(parsedBody)
+        } catch (_: Exception) {
+            return jsonError(Response.Status.BAD_REQUEST, "Invalid JSON request")
+        }
+
+        val submittedCode = AUTH_CODE_PATTERN
+            .find(parsedBody["postData"].orEmpty())
+            ?.groupValues
+            ?.get(1)
+        if (submittedCode == null || !codesMatch(submittedCode, authCode)) {
+            return unauthorizedResponse("Invalid authentication code")
+        }
+
+        val token = generateToken()
+        activeTokens.add(token)
+        return jsonResponse(
+            Response.Status.OK,
+            """{"success":true,"token":${jsonString(token)}}"""
+        ).apply {
+            addHeader(
+                "Set-Cookie",
+                "$TOKEN_COOKIE_NAME=$token; Path=/; HttpOnly; SameSite=Strict"
+            )
+        }
+    }
+
+    private fun generateToken(): String {
+        val tokenBytes = ByteArray(TOKEN_BYTE_LENGTH)
+        secureRandom.nextBytes(tokenBytes)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes)
+    }
+
+    private fun codesMatch(submittedCode: String, expectedCode: String): Boolean =
+        MessageDigest.isEqual(
+            submittedCode.toByteArray(Charsets.UTF_8),
+            expectedCode.toByteArray(Charsets.UTF_8)
+        )
+
+    private fun isAuthenticated(session: IHTTPSession): Boolean {
+        val authorizationToken = session.headers["authorization"]
+            ?.takeIf { it.startsWith(BEARER_PREFIX, ignoreCase = true) }
+            ?.substring(BEARER_PREFIX.length)
+            ?.trim()
+        val customHeaderToken = session.headers[TOKEN_HEADER_NAME]?.trim()
+        val cookieToken = session.headers["cookie"]
+            ?.split(';')
+            ?.asSequence()
+            ?.map { it.trim() }
+            ?.firstOrNull { it.startsWith("$TOKEN_COOKIE_NAME=") }
+            ?.substringAfter('=')
+            ?.trim()
+        val token = authorizationToken
+            ?.takeIf { it.isNotEmpty() }
+            ?: customHeaderToken?.takeIf { it.isNotEmpty() }
+            ?: cookieToken?.takeIf { it.isNotEmpty() }
+        return token != null && activeTokens.contains(token)
+    }
+
+    private fun unauthorizedResponse(message: String = "Authentication required"): Response =
+        jsonError(Response.Status.UNAUTHORIZED, message).apply {
+            addHeader("WWW-Authenticate", "Bearer")
+        }
+
+    private fun methodNotAllowedResponse(): Response = newFixedLengthResponse(
+        Response.Status.METHOD_NOT_ALLOWED,
+        MIME_PLAINTEXT,
+        "Method not allowed"
+    )
 
     private fun handleUpload(session: IHTTPSession): Response {
         val contentType = session.headers["content-type"].orEmpty()
@@ -63,8 +170,11 @@ class LocalFileServer(
             )
         }
 
-        val rawFileName = session.parms[UPLOAD_FIELD_NAME]
-        val temporaryPath = uploadedParts[UPLOAD_FIELD_NAME]
+        val uploadFieldName = UPLOAD_FIELD_NAMES.firstOrNull { fieldName ->
+            !session.parms[fieldName].isNullOrBlank() && !uploadedParts[fieldName].isNullOrBlank()
+        }
+        val rawFileName = uploadFieldName?.let(session.parms::get)
+        val temporaryPath = uploadFieldName?.let(uploadedParts::get)
         if (rawFileName.isNullOrBlank() || temporaryPath.isNullOrBlank()) {
             return uploadError(Response.Status.BAD_REQUEST, "File field is required")
         }
@@ -158,10 +268,10 @@ class LocalFileServer(
         }
 
     private fun uploadError(status: Response.Status, message: String): Response =
-        jsonResponse(
-            status,
-            """{"success":false,"message":${jsonString(message)}}"""
-        )
+        jsonError(status, message)
+
+    private fun jsonError(status: Response.Status, message: String): Response =
+        jsonResponse(status, """{"success":false,"message":${jsonString(message)}}""")
 
     private fun jsonResponse(status: Response.Status, body: String): Response =
         newFixedLengthResponse(
@@ -197,16 +307,21 @@ class LocalFileServer(
     companion object {
         const val PORT = 8080
 
-        private const val UPLOAD_FIELD_NAME = "file"
+        private val UPLOAD_FIELD_NAMES = listOf("file", "files")
         private const val SHARED_DIRECTORY_NAME = "shared_files"
         private const val MAX_FILE_SIZE_BYTES = 50L * 1024 * 1024
         private const val MAX_MULTIPART_OVERHEAD_BYTES = 1024L * 1024
         private const val MAX_REQUEST_SIZE_BYTES = MAX_FILE_SIZE_BYTES + MAX_MULTIPART_OVERHEAD_BYTES
         private const val MAX_FILE_NAME_CHARACTERS = 60
+        private const val TOKEN_BYTE_LENGTH = 32
+        private const val TOKEN_HEADER_NAME = "x-focuswave-token"
+        private const val TOKEN_COOKIE_NAME = "FocusWave-Token"
+        private const val BEARER_PREFIX = "Bearer "
+        private val AUTH_CODE_PATTERN = Regex(""""code"\s*:\s*"(\d{4})"""")
         private val CONTROL_CHARACTERS = Regex("[\\u0000-\\u001F\\u007F]")
         private val UNSAFE_FILE_NAME_CHARACTERS = Regex("""[/:*?"<>|]""")
 
-        private val HOME_PAGE = """
+        private val FALLBACK_HOME_PAGE = """
             <!doctype html>
             <html lang="ko">
             <head>
