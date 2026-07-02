@@ -41,13 +41,19 @@ class LocalFileServer(
 
             session.uri == "/list" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
-                session.method == Method.GET -> jsonResponse(Response.Status.OK, "[]")
+                session.method == Method.GET -> handleList()
                 else -> methodNotAllowedResponse()
             }
 
             session.uri == "/upload" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
                 session.method == Method.POST -> handleUpload(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            session.uri.startsWith("/download/") -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.GET -> handleDownload(session.uri)
                 else -> methodNotAllowedResponse()
             }
 
@@ -156,9 +162,14 @@ class LocalFileServer(
         }
 
         val contentLength = session.headers["content-length"]?.toLongOrNull()
+
+        /**
+         * 파일 크기 제한
         if (contentLength != null && contentLength > MAX_REQUEST_SIZE_BYTES) {
             return uploadError(Response.Status.PAYLOAD_TOO_LARGE, "File is too large")
         }
+
+         */
 
         val uploadedParts = mutableMapOf<String, String>()
         try {
@@ -173,7 +184,9 @@ class LocalFileServer(
         val uploadFieldName = UPLOAD_FIELD_NAMES.firstOrNull { fieldName ->
             !session.parms[fieldName].isNullOrBlank() && !uploadedParts[fieldName].isNullOrBlank()
         }
-        val rawFileName = uploadFieldName?.let(session.parms::get)
+        val rawFileName = session.parameters["fileName"]?.firstOrNull()
+            ?: session.parms["fileName"]
+            ?: uploadFieldName?.let(session.parms::get)
         val temporaryPath = uploadFieldName?.let(uploadedParts::get)
         if (rawFileName.isNullOrBlank() || temporaryPath.isNullOrBlank()) {
             return uploadError(Response.Status.BAD_REQUEST, "File field is required")
@@ -185,9 +198,14 @@ class LocalFileServer(
         if (!temporaryFile.isFile) {
             return uploadError(Response.Status.BAD_REQUEST, "Uploaded file is invalid")
         }
+
+        /**
+         * 
+        파일 크기 제한
         if (temporaryFile.length() > MAX_FILE_SIZE_BYTES) {
             return uploadError(Response.Status.PAYLOAD_TOO_LARGE, "File is too large")
         }
+         */
 
         return try {
             val storedFile = saveUploadedFile(temporaryFile, safeFileName)
@@ -203,6 +221,60 @@ class LocalFileServer(
         }
     }
 
+    private fun handleList(): Response {
+        return try {
+            val directory = getOrCreateSharedDirectory()
+
+            val filesJson = directory
+                .listFiles()
+                ?.filter { it.isFile }
+                ?.joinToString(
+                    prefix = "[",
+                    postfix = "]"
+                ) { file ->
+                    jsonString(file.name)
+                } ?: "[]"
+
+            jsonResponse(Response.Status.OK, filesJson)
+        } catch (error: IOException) {
+            jsonError(Response.Status.INTERNAL_ERROR, "Failed to list files")
+        }
+    }
+
+    private fun handleDownload(uri: String): Response {
+        return try {
+            val encodedFileName = uri.removePrefix("/download/")
+            val decodedFileName = java.net.URLDecoder.decode(encodedFileName, "UTF-8")
+
+            val safeFileName = sanitizeFileName(decodedFileName)
+                ?: return jsonError(Response.Status.BAD_REQUEST, "Invalid file name")
+
+            val directory = getOrCreateSharedDirectory()
+            val file = File(directory, safeFileName)
+
+            if (!file.exists() || !file.isFile) {
+                return jsonError(Response.Status.NOT_FOUND, "File not found")
+            }
+
+            if (file.canonicalFile.parentFile != directory.canonicalFile) {
+                return jsonError(Response.Status.BAD_REQUEST, "Invalid file path")
+            }
+
+            newFixedLengthResponse(
+                Response.Status.OK,
+                "application/octet-stream",
+                file.inputStream(),
+                file.length()
+            ).apply {
+                addHeader(
+                    "Content-Disposition",
+                    "attachment; filename=\"${file.name}\""
+                )
+            }
+        } catch (error: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "Failed to download file")
+        }
+    }
     private fun getOrCreateSharedDirectory(): File {
         val directory = File(appFilesDirectory, SHARED_DIRECTORY_NAME)
         if (directory.exists()) {
@@ -215,6 +287,17 @@ class LocalFileServer(
         return directory
     }
 
+    private fun getOrCreateUploadDirectory(): File {
+        val directory = File(appFilesDirectory, UPLOAD_DIRECTORY_NAME)
+        if (directory.exists()) {
+            if (!directory.isDirectory) {
+                throw IOException("Upload storage path is not a directory")
+            }
+        } else if (!directory.mkdirs() && !directory.isDirectory) {
+            throw IOException("Failed to create upload storage directory")
+        }
+        return directory
+    }
     private fun sanitizeFileName(rawFileName: String): String? {
         val leafName = rawFileName
             .replace('\\', '/')
@@ -253,14 +336,27 @@ class LocalFileServer(
 
     private fun saveUploadedFile(temporaryFile: File, safeFileName: String): File =
         synchronized(fileSaveLock) {
-            val directory = getOrCreateSharedDirectory()
+            val directory = getOrCreateUploadDirectory()
             val destination = resolveUniqueFile(directory, safeFileName)
+
             if (destination.canonicalFile.parentFile != directory.canonicalFile) {
                 throw IOException("Invalid file path")
             }
 
             try {
-                temporaryFile.copyTo(destination, overwrite = false)
+                temporaryFile.inputStream().use { input ->
+                    destination.outputStream().use { output ->
+                        input.copyTo(output, bufferSize = 1024 * 1024)
+                        output.flush()
+                    }
+                }
+
+                if (destination.length() != temporaryFile.length()) {
+                    destination.delete()
+                    throw IOException("File copy incomplete")
+                }
+
+                destination
             } catch (error: IOException) {
                 destination.delete()
                 throw error
@@ -308,6 +404,11 @@ class LocalFileServer(
         const val PORT = 8080
 
         private val UPLOAD_FIELD_NAMES = listOf("file", "files")
+
+        //pc -> phone
+        private const val UPLOAD_DIRECTORY_NAME = "uploaded_files"
+
+        //phone -> pc
         private const val SHARED_DIRECTORY_NAME = "shared_files"
         private const val MAX_FILE_SIZE_BYTES = 50L * 1024 * 1024
         private const val MAX_MULTIPART_OVERHEAD_BYTES = 1024L * 1024
@@ -368,3 +469,4 @@ class LocalFileServer(
         """.trimIndent()
     }
 }
+

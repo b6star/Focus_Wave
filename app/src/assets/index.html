@@ -233,12 +233,14 @@
 
         for (let i = 0; i < fileInput.files.length; i++) {
             formData.append("files", fileInput.files[i]);
+            formData.append(`fileName_${i}`, fileInput.files[i].name);
         }
 
         statusText.innerText = "전송 중...";
 
         try {
-            const response = await fetch('/upload', {
+            const firstFileName = fileInput.files[0].name;
+            const response = await fetch(`/upload?fileName=${encodeURIComponent(firstFileName)}`, {
                 method: 'POST',
                 body: formData
             });

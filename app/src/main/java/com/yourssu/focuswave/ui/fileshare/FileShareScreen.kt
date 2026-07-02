@@ -21,11 +21,16 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.server.FileShareUiState
 import kotlinx.coroutines.launch
+import android.content.Intent
+import androidx.core.content.FileProvider
 
 
 data class SharedFileUi(
@@ -49,6 +54,17 @@ fun FileShareOverlay(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val fileServerManager: FileServerManager = viewModel()
+
+    var fileToSave by remember { mutableStateOf<SharedFileUi?>(null) }
+
+    val saveFileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("*/*")
+    ) { destinationUri ->
+        if (destinationUri != null && fileToSave != null) {
+            fileServerManager.saveUploadedFileToUri(fileToSave!!, destinationUri)
+        }
+    }
 
     var receivedFiles by remember {
         mutableStateOf<List<SharedFileUi>>(emptyList())
@@ -98,14 +114,23 @@ fun FileShareOverlay(
             ConnectionStatusCard(
                 uiState = uiState,
                 onStartClick = onStartClick,
-                onStopClick = onStopClick
+                onStopClick = {
+                    onStopClick()
+                    receivedFiles = emptyList()
+                    selectedFiles = emptyList()
+                }
             )
 
             PcAccessInfoCard(
+                uiState = uiState,
                 pcAccessUrl = pcAccessUrl,
                 onCopyClick = {
                     clipboardManager.setText(AnnotatedString(pcAccessUrl))
+                },
+                onRefreshClick = {
+                    fileServerManager.regenerateAuthCode()
                 }
+
             )
 
             //File Sharing panel
@@ -158,10 +183,11 @@ fun FileShareOverlay(
                         0 -> PcToPhoneSection(
                             receivedFiles = receivedFiles,
                             onRefreshClick = {
-                                // TODO
+                                receivedFiles = fileServerManager.getUploadedFiles()
                             },
                             onSaveClick = { file ->
-                                // TODO
+                                fileToSave = file
+                                saveFileLauncher.launch(file.name)
                             }
                         )
 
@@ -174,7 +200,8 @@ fun FileShareOverlay(
                                 selectedFiles = selectedFiles.filterNot { it.id == targetFile.id }
                             },
                             onSendClick = {
-                                // TODO
+                                fileServerManager.shareFiles(selectedFiles)
+                                selectedFiles = emptyList()
                             }
                         )
                     }
@@ -372,8 +399,6 @@ private fun PhoneToPcSection(
         }
 
 
-
-
         Button(
             onClick = onPickFileClick,
             modifier = Modifier.fillMaxWidth(),
@@ -439,8 +464,10 @@ private fun SectionCard(
 
 @Composable
 private fun PcAccessInfoCard(
+    uiState: FileShareUiState,
     pcAccessUrl: String,
-    onCopyClick: () -> Unit
+    onCopyClick: () -> Unit,
+    onRefreshClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -475,6 +502,38 @@ private fun PcAccessInfoCard(
                 Text("복사")
             }
         }
+
+
+        Row(
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "인증 코드",
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium
+            )
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Text(
+                text = uiState.authCode.toString(),
+                color = Color(0xFFFFD700),
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Text(
+                text = "재발급",
+                color = Color(0xFF8A86E6),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.clickable {
+                    onRefreshClick()
+                }
+
+            )
+        }
+
+
+
 
         Text(
             text = "PC 브라우저에서 같은 Wi-Fi의 위 주소로 접속하세요.",
