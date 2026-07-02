@@ -16,7 +16,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -58,12 +57,24 @@ import com.yourssu.focuswave.ui.state.TimerUiState
 import com.yourssu.focuswave.ui.theme.FocusWaveTheme
 import com.yourssu.focuswave.ui.timer.TimerViewModel
 import android.view.WindowManager
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RocketLaunch
+import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.sp
 import com.yourssu.focuswave.ui.fileshare.FileShareOverlay
 
 class MainActivity : ComponentActivity() {
@@ -119,7 +130,7 @@ private fun MainScreenContent(
     onNewPathClick: () -> Unit,
     timerViewModel: TimerViewModel,
     onSoundEnabledChange: (SoundTrackId, Boolean) -> Unit,
-    onSoundVolumeChange: (SoundTrackId, Float) -> Unit
+    onSoundVolumeChange: (SoundTrackId, Float) -> Unit,
 ) {
     var showFileShare by remember { mutableStateOf(false) }
     val playbackSoundTracks = if (uiState.phase == TimerPhase.PAUSED) {
@@ -142,7 +153,10 @@ private fun MainScreenContent(
                 onDecreaseFocus = timerViewModel::decreaseFocusMinutes,
                 onIncreaseFocus = timerViewModel::increaseFocusMinutes,
                 onDecreaseBreak = timerViewModel::decreaseBreakMinutes,
-                onIncreaseBreak = timerViewModel::increaseBreakMinutes
+                onIncreaseBreak = timerViewModel::increaseBreakMinutes,
+                onFileShareClick = { 
+                    showFileShare = true
+                }
             )
         },
         countdownOverlay = {
@@ -164,9 +178,6 @@ private fun MainScreenContent(
                     onDismiss = { showFileShare = false }
                 )
             }
-        },
-        onFileShareClick = {
-            showFileShare = true
         }
     )
 }
@@ -178,7 +189,6 @@ private fun FocusScreen(
     countdownOverlay: @Composable () -> Unit,
     soundMixerPanel: @Composable () -> Unit,
     fileShareOverlay: @Composable () -> Unit = {},
-    onFileShareClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
@@ -222,19 +232,6 @@ private fun FocusScreen(
             }
         }
 
-        ElevatedButton(
-            onClick = onFileShareClick,
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 36.dp),
-            colors = ButtonDefaults.elevatedButtonColors(
-                containerColor = Color(0xFF8A86E6),
-                contentColor = Color.White
-            )
-        ) {
-            Text("FILE")
-        }
-
         countdownOverlay()
         fileShareOverlay()
     }
@@ -266,6 +263,7 @@ private fun TimerControlsPanel(
     onIncreaseFocus: () -> Unit,
     onDecreaseBreak: () -> Unit,
     onIncreaseBreak: () -> Unit,
+    onFileShareClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(8.dp)
@@ -288,7 +286,11 @@ private fun TimerControlsPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            )
+            {
                 Text(
                     text = uiState.formattedTime,
                     color = Color.White,
@@ -306,11 +308,50 @@ private fun TimerControlsPanel(
                 )
             }
 
-            Text(
-                text = uiState.activePhase.name,
-                color = Color.White.copy(alpha = 0.78f),
-                style = MaterialTheme.typography.labelMedium
-            )
+
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ElevatedButton(
+                    onClick = onFileShareClick,
+                    modifier = modifier
+                        .width(120.dp)
+                        .height(44.dp)
+                        .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)), shape),
+                    shape = shape,
+                    elevation = ButtonDefaults.elevatedButtonElevation(
+                        defaultElevation = 5.dp,
+                        pressedElevation = 1.dp,
+                        hoveredElevation = 7.dp,
+                        focusedElevation = 7.dp
+                    ),
+                    colors = ButtonDefaults.elevatedButtonColors(
+                        containerColor = Color.White.copy(alpha = 0.2f),
+                        contentColor = Color.White,
+                        disabledContainerColor = Color.White.copy(alpha = 0.1f),
+                        disabledContentColor = Color.White.copy(alpha = 0.42f)
+                    ),
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        "File Sharing"
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = uiState.activePhase.name,
+                    color = Color.White.copy(alpha = 0.78f),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
         }
 
         LinearProgressIndicator(
@@ -320,34 +361,45 @@ private fun TimerControlsPanel(
             trackColor = Color.White.copy(alpha = 0.24f)
         )
 
-        TimerDurationSettings(
-            focusMinutes = uiState.focusMinutes,
-            breakMinutes = uiState.breakMinutes,
-            enabled = uiState.canEditDurations,
-            onDecreaseFocus = onDecreaseFocus,
-            onIncreaseFocus = onIncreaseFocus,
-            onDecreaseBreak = onDecreaseBreak,
-            onIncreaseBreak = onIncreaseBreak
-        )
-
-        FlowRow(
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-            maxItemsInEachRow = 4
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            TimerActionButton(
-                text = if (uiState.phase == TimerPhase.PAUSED) "RESUME" else "START",
-                onClick = onStartClick,
-                enabled = !uiState.isRunning
+            TimerDurationSettings(
+                focusMinutes = uiState.focusMinutes,
+                breakMinutes = uiState.breakMinutes,
+                enabled = uiState.canEditDurations,
+                onDecreaseFocus = onDecreaseFocus,
+                onIncreaseFocus = onIncreaseFocus,
+                onDecreaseBreak = onDecreaseBreak,
+                onIncreaseBreak = onIncreaseBreak
             )
-            TimerActionButton(
-                text = "PAUSE",
-                onClick = onPauseClick,
-                enabled = uiState.isRunning
-            )
-            TimerActionButton(text = "RESET", onClick = onResetClick)
-            TimerActionButton(text = "NEW PATH", onClick = onNewPathClick)
+            Spacer(modifier = Modifier.weight(1f))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(
+                    8.dp,
+                )
+            ) {
+                TimerActionButton(
+                    icon = if (uiState.isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    onClick = {
+                        if (uiState.isRunning) {
+                            onPauseClick()
+                        } else {
+                            onStartClick()
+                        }
+                    }
+                )
+                TimerActionButton(
+                    icon = Icons.Default.Refresh,
+                    onClick = onResetClick
+                )
+                TimerActionButton(
+                    icon = Icons.Default.Route,
+                    onClick = onNewPathClick
+                )
+            }
+
         }
     }
 }
@@ -362,13 +414,10 @@ private fun TimerDurationSettings(
     onIncreaseFocus: () -> Unit,
     onDecreaseBreak: () -> Unit,
     onIncreaseBreak: () -> Unit,
-
 ) {
-    FlowRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        maxItemsInEachRow = 2
+    Row(
+        horizontalArrangement = Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically
     ) {
         DurationStepper(
             label = "FOCUS",
@@ -377,6 +426,8 @@ private fun TimerDurationSettings(
             onDecrease = onDecreaseFocus,
             onIncrease = onIncreaseFocus
         )
+
+        /*
         DurationStepper(
             label = "BREAK",
             minutes = breakMinutes,
@@ -384,6 +435,7 @@ private fun TimerDurationSettings(
             onDecrease = onDecreaseBreak,
             onIncrease = onIncreaseBreak
         )
+        */
     }
 }
 
@@ -399,7 +451,7 @@ private fun DurationStepper(
 
     Row(
         modifier = Modifier
-            .width(146.dp)
+            .width(108.dp)
             .background(Color.White.copy(alpha = 0.1f), shape)
             .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)), shape)
             .padding(horizontal = 4.dp, vertical = 6.dp),
@@ -444,7 +496,7 @@ private fun StepperButton(
 
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(30.dp)
             .background(Color.White.copy(alpha = if (enabled) 0.20f else 0.08f), shape)
             .border(
                 BorderStroke(
@@ -495,18 +547,18 @@ private fun StepperButton(
 
 @Composable
 private fun TimerActionButton(
-    text: String,
+    icon: ImageVector   ,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(6.dp)
 
     ElevatedButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
-            .width(108.dp)
+            .width(44.dp)
             .height(44.dp)
             .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)), shape),
         shape = shape,
@@ -522,15 +574,12 @@ private fun TimerActionButton(
             disabledContainerColor = Color.White.copy(alpha = 0.1f),
             disabledContentColor = Color.White.copy(alpha = 0.42f)
         ),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            softWrap = false,
-            textAlign = TextAlign.Center
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(24.dp)
         )
     }
 }
@@ -597,13 +646,13 @@ fun MainScreenPreview() {
                     onIncreaseBreak = {},
                     onIncreaseFocus = {},
                     onDecreaseFocus = {},
-                    onDecreaseBreak = {}
+                    onDecreaseBreak = {},
+                    onFileShareClick = {}
                 )
             },
             countdownOverlay = {},
             soundMixerPanel = {},
             fileShareOverlay = {},
-            onFileShareClick = {}
         )
     }
 }

@@ -37,7 +37,7 @@ fun SoundMixerPanel(
             .background(Color.White.copy(alpha = 0.14f), shape)
             .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)), shape)
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         Text(
             text = "SOUND MIXER",

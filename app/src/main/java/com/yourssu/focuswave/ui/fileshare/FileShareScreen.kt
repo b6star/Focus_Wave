@@ -23,6 +23,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.net.InetAddress
 import java.nio.ByteOrder
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import kotlinx.coroutines.launch
+
 
 data class SharedFileUi(
     val id: String,
@@ -35,7 +41,7 @@ data class SharedFileUi(
 )
 
 
-
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FileShareOverlay(
     onDismiss: () -> Unit,
@@ -69,6 +75,9 @@ fun FileShareOverlay(
         if (phoneIpAddress.isBlank()) "" else "http://$phoneIpAddress:$serverPort"
     }
 
+    val pagerState = rememberPagerState(pageCount = { 2 })
+    val coroutineScope = rememberCoroutineScope()
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -98,34 +107,110 @@ fun FileShareOverlay(
                 }
             )
 
-            PcToPhoneSection(
-                receivedFiles = receivedFiles,
-                onRefreshClick = {
-                    // TODO: 백엔드 연결 후 PC에서 업로드된 파일 목록 조회
-                    // 예: receivedFiles = fileShareRepository.getReceivedFiles()
-                },
-                onSaveClick = { file ->
-                    // TODO: PC에서 받은 파일 저장/열기 처리
-                }
-            )
+            //File Sharing panel
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.18f), RoundedCornerShape(10.dp))
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    FileShareTabButton(
+                        text = "파일 받기",
+                        selected = pagerState.currentPage == 0,
+                        selectedColor = Color(0xFF8A86E6),
+                        onClick = {
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(0)
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
 
-            PhoneToPcSection(
-                selectedFiles = selectedFiles,
-                onPickFileClick = {
-                    filePickerLauncher.launch(arrayOf("*/*"))
-                },
-                onRemoveFileClick = { targetFile ->
-                    selectedFiles = selectedFiles.filterNot { it.id == targetFile.id }
-                },
-                onSendClick = {
-                    // TODO: 선택된 파일들을 백엔드 공유 목록에 등록
-                    // 예: fileShareRepository.shareFiles(selectedFiles)
+                    FileShareTabButton(
+                        text = "파일 보내기",
+                        selected = pagerState.currentPage == 1,
+                        selectedColor = Color(0xFFE68A86),
+                        onClick = {
+                            coroutineScope.launch {
+                                pagerState.animateScrollToPage(1)
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    )
                 }
-            )
+
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 230.dp, max = 480.dp)
+                ) { page ->
+                    when (page) {
+                        0 -> PcToPhoneSection(
+                            receivedFiles = receivedFiles,
+                            onRefreshClick = {
+                                // TODO
+                            },
+                            onSaveClick = { file ->
+                                // TODO
+                            }
+                        )
+
+                        1 -> PhoneToPcSection(
+                            selectedFiles = selectedFiles,
+                            onPickFileClick = {
+                                filePickerLauncher.launch(arrayOf("*/*"))
+                            },
+                            onRemoveFileClick = { targetFile ->
+                                selectedFiles = selectedFiles.filterNot { it.id == targetFile.id }
+                            },
+                            onSendClick = {
+                                // TODO
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
+@Composable
+private fun FileShareTabButton(
+    text: String,
+    selected: Boolean,
+    selectedColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(38.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = ButtonDefaults.buttonColors(
+            containerColor = if (selected) {
+                selectedColor
+            } else {
+                Color.Transparent
+            },
+            contentColor = Color.White
+        ),
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium
+        )
+    }
+}
 @Composable
 private fun HeaderSection(
     onDismiss: () -> Unit
@@ -136,14 +221,9 @@ private fun HeaderSection(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "🚀 Focus Wave 파일공유",
+                text = "🚀 Focus Wave File Sharing",
                 color = Color.White,
                 style = MaterialTheme.typography.titleLarge
-            )
-            Text(
-                text = "같은 와이파이의 PC와 파일을 주고받습니다.",
-                color = Color.White.copy(alpha = 0.68f),
-                style = MaterialTheme.typography.bodySmall
             )
         }
 
@@ -177,6 +257,7 @@ private fun PcToPhoneSection(
     onSaveClick: (SharedFileUi) -> Unit
 ) {
     SectionCard {
+
         Text(
             text = "💻 PC → 📱 폰",
             color = Color.White,
@@ -204,7 +285,7 @@ private fun PcToPhoneSection(
             EmptyText("아직 PC에서 받은 파일이 없습니다.")
         } else {
             LazyColumn(
-                modifier = Modifier.heightIn(max = 160.dp),
+                modifier = Modifier.heightIn(max = 360.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(receivedFiles) { file ->
@@ -227,17 +308,34 @@ private fun PhoneToPcSection(
     onSendClick: () -> Unit
 ) {
     SectionCard {
+
         Text(
             text = "📱 폰 → 💻 PC",
             color = Color.White,
             style = MaterialTheme.typography.titleMedium
         )
 
-        Text(
-            text = "PC로 보낼 파일을 선택합니다.",
-            color = Color.White.copy(alpha = 0.7f),
-            style = MaterialTheme.typography.bodySmall
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "PC로 보낼 파일을 선택합니다.",
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.bodySmall
+            )
+            if (!selectedFiles.isEmpty()) {
+                Text(
+                    text = "${selectedFiles.size} files",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+
+        }
+
+
+
 
         Button(
             onClick = onPickFileClick,
@@ -254,7 +352,9 @@ private fun PhoneToPcSection(
             EmptyText("선택된 파일이 없습니다.")
         } else {
             LazyColumn(
-                modifier = Modifier.heightIn(max = 160.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(selectedFiles) { file ->
@@ -268,13 +368,19 @@ private fun PhoneToPcSection(
 
             Button(
                 onClick = onSendClick,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF8A86E6),
                     contentColor = Color.White
                 )
             ) {
-                Text("PC로 전송 준비")
+                Text(
+                    text = "PC로 전송",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -319,7 +425,7 @@ private fun PcAccessInfoCard(
                 pcAccessUrl
             },
             color = Color(0xFF8A86E6),
-            style = MaterialTheme.typography.bodyMedium
+            style = MaterialTheme.typography.titleMedium
         )
 
         Text(
@@ -327,18 +433,6 @@ private fun PcAccessInfoCard(
             color = Color.White.copy(alpha = 0.65f),
             style = MaterialTheme.typography.bodySmall
         )
-
-        Button(
-            onClick = onCopyClick,
-            enabled = pcAccessUrl.isNotBlank(),
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF8A86E6),
-                contentColor = Color.White
-            )
-        ) {
-            Text("주소 복사")
-        }
     }
 }
 
