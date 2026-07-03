@@ -173,9 +173,32 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             .replace(UNSAFE_FILE_NAME_CHARACTERS, "_")
             .trim()
             .trim('.')
-            .take(MAX_FILE_NAME_CHARACTERS)
 
-        return cleanedName.ifBlank { null }
+        if (cleanedName.isBlank()) return null
+
+        val dotIndex = cleanedName.lastIndexOf('.')
+
+        val extension = if (dotIndex > 0) {
+            cleanedName.substring(dotIndex)
+        } else {
+            ""
+        }
+
+        val baseName = if (dotIndex > 0) {
+            cleanedName.substring(0, dotIndex)
+        } else {
+            cleanedName
+        }
+
+        val maxBaseLength = (MAX_FILE_NAME_CHARACTERS - extension.length)
+            .coerceAtLeast(1)
+
+        val safeBaseName = baseName
+            .take(maxBaseLength)
+            .trimEnd()
+            .trimEnd { Character.isHighSurrogate(it) }
+
+        return (safeBaseName + extension).ifBlank { null }
     }
 
     private fun resolveUniqueFile(directory: File, safeFileName: String): File {

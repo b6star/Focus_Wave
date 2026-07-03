@@ -304,16 +304,40 @@ class LocalFileServer(
         val leafName = rawFileName
             .replace('\\', '/')
             .substringAfterLast('/')
+
         val normalizedName = Normalizer.normalize(leafName, Normalizer.Form.NFC)
+
         val cleanedName = normalizedName
             .replace(CONTROL_CHARACTERS, "")
             .replace(UNSAFE_FILE_NAME_CHARACTERS, "_")
             .trim()
             .trim('.')
-            .take(MAX_FILE_NAME_CHARACTERS)
+
+        if (cleanedName.isBlank()) return null
+
+        val dotIndex = cleanedName.lastIndexOf('.')
+
+        val extension = if (dotIndex > 0) {
+            cleanedName.substring(dotIndex)
+        } else {
+            ""
+        }
+
+        val baseName = if (dotIndex > 0) {
+            cleanedName.substring(0, dotIndex)
+        } else {
+            cleanedName
+        }
+
+        val maxBaseLength = (MAX_FILE_NAME_CHARACTERS - extension.length)
+            .coerceAtLeast(1)
+
+        val safeBaseName = baseName
+            .take(maxBaseLength)
+            .trimEnd()
             .trimEnd { Character.isHighSurrogate(it) }
 
-        return cleanedName.ifBlank { null }
+        return (safeBaseName + extension).ifBlank { null }
     }
 
     private fun resolveUniqueFile(directory: File, safeFileName: String): File {
