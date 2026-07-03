@@ -280,7 +280,7 @@
         };
     }
 
-    async function verifyCode() {
+   async function verifyCode() {
         const codeInput = document.getElementById('authCodeInput');
         const authStatus = document.getElementById('authStatus');
         const authCard = document.getElementById('authCard');
@@ -302,6 +302,7 @@
                 body: JSON.stringify({ code: code })
             });
 
+            // 1. 인증 및 키 교환 성공 (200 OK)
             if (response.ok) {
                 authStatus.innerText = "보안 연결 설정 중...";
                 await setupEncryption(); // 사용자 몰래 백그라운드에서 키 교환 수행
@@ -321,13 +322,34 @@
                     fetchFileList();
                 }, 2000);
 
-            } else if (response.status === 401 || response.status === 403) {
-                authStatus.innerText = "인증 코드가 올바르지 않습니다.";
             } else {
-                authStatus.innerText = "인증 실패: 서버 오류";
+                // 2. 인증 실패 및 차단 처리 (401, 403, 429 등)
+                // 서버가 주는 {"success":false, "message":"..."} 객체를 파싱합니다.
+                let errorData;
+                try {
+                    errorData = await response.json();
+                } catch (e) {
+                    errorData = null;
+                }
+
+                // 서버가 명확한 에러 메시지를 보냈다면 해당 메시지를 사용하고, 없으면 코드로 매핑
+                if (errorData && errorData.message) {
+                    authStatus.innerText = errorData.message;
+                } else {
+                    // JSON 파싱 실패 혹은 message 필드가 없는 경우 예외 처리
+                    if (response.status === 401) {
+                        authStatus.innerText = "인증 코드가 올바르지 않습니다.";
+                    } else if (response.status === 403) {
+                        authStatus.innerText = "영구 차단됨: 서버가 재시작될 때까지 접속할 수 없습니다.";
+                    } else if (response.status === 429) {
+                        authStatus.innerText = "요청 횟수 초과: 1분 뒤에 다시 시도해주세요.";
+                    } else {
+                        authStatus.innerText = `인증 실패: 서버 에러 (${response.status})`;
+                    }
+                }
             }
         } catch (error) {
-            authStatus.innerText = "서버에 연결할 수 없습니다.";
+            authStatus.innerText = "서버(폰)에 연결할 수 없습니다. Wi-Fi 상태를 확인해 주세요.";
         }
     }
 

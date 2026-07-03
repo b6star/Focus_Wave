@@ -243,13 +243,16 @@ class TimerViewModel : ViewModel() {
 
             when (currentState.phase) {
                 TimerPhase.FOCUS -> {
+                    shouldContinue = false
+                    timerJob = null
+                    pausedSoundSnapshot = emptyMap()
+
                     currentState.copy(
-                        totalSeconds = currentState.breakMinutes * SECONDS_PER_MINUTE,
-                        remainingSeconds = currentState.breakMinutes * SECONDS_PER_MINUTE,
-                        phase = TimerPhase.BREAK,
-                        activePhase = TimerPhase.BREAK,
-                        isRunning = true
-                    )
+                        remainingSeconds = 0,
+                        phase = TimerPhase.FINISHED,
+                        activePhase = TimerPhase.FINISHED,
+                        isRunning = false
+                    ).withAllSoundsStopped()
                 }
 
                 TimerPhase.BREAK -> {
