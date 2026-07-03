@@ -3,4 +3,7 @@
     <files-path
         name="uploaded_files"
         path="uploaded_files/" />
+    <files-path
+        name="shared_files"
+        path="shared_files/" />
 </paths>

@@ -1,4 +1,4 @@
-package com.yourssu.focuswave.server
+﻿package com.yourssu.focuswave.server
 
 import android.app.Application
 import android.content.Context
@@ -14,8 +14,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import android.net.Uri
+import android.util.Log
 import androidx.core.content.FileProvider
 import com.yourssu.focuswave.ui.fileshare.SharedFileUi
+import kotlinx.coroutines.flow.update
 import java.io.File
 import java.io.IOException
 import java.text.Normalizer
@@ -38,15 +40,18 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             appFilesDirectory = application.filesDir,
             authCode = authCode,
             homePage = loadHomePage(),
-            onFileUploaded = {
-                refreshUploadedFiles()
-            }
+            onFilesChanged = ::onSharedFilesChanged
         )
         try {
             newServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
             server = newServer
 
             val serverAddress = findWifiServerAddress()
+            Log.d(
+                LOG_TAG,
+                "server started: address=${serverAddress ?: "unavailable"}, " +
+                    "port=${LocalFileServer.PORT}"
+            )
             _uiState.value = FileShareUiState(
                 isRunning = true,
                 serverAddress = serverAddress,
@@ -67,7 +72,18 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         }
     }
 
+    private fun onSharedFilesChanged() {
+        _uiState.update { state ->
+            state.copy(
+                filesRevision = state.filesRevision + 1L,
+                uploadedFiles = getUploadedFiles()
+            )
+        }
+        Log.d(LOG_TAG, "shared files changed")
+    }
+
     fun stopServer() {
+        Log.d(LOG_TAG, "server stopped")
         server?.stop()
         server = null
         clearFileShareRecords()
@@ -75,7 +91,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     }
 
     fun getUploadedFiles(): List<SharedFileUi> {
-        val directory = File(getApplication<Application>().filesDir, UPLOAD_DIRECTORY_NAME)
+        val directory = LocalFileServer.sharedDirectory(getApplication<Application>().filesDir)
 
         if (!directory.exists() || !directory.isDirectory) {
             return emptyList()
@@ -145,6 +161,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
 
             onProgress(file.id, 100)
         }
+        onSharedFilesChanged()
     }
 
     private fun getOrCreateSharedDirectory(): File {
@@ -264,10 +281,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     fun saveUploadedFileToUri(file: SharedFileUi, destinationUri: Uri) {
         val application = getApplication<Application>()
 
-        val sourceFile = File(
-            File(application.filesDir, UPLOAD_DIRECTORY_NAME),
-            file.name
-        )
+        val sourceFile = File(LocalFileServer.sharedDirectory(application.filesDir), file.name)
 
         if (!sourceFile.exists()) return
 
@@ -288,8 +302,8 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         val appFilesDir = getApplication<Application>().filesDir
 
         listOf(
-            UPLOAD_DIRECTORY_NAME,
-            SHARED_DIRECTORY_NAME
+            LocalFileServer.RECEIVED_DIRECTORY_NAME,
+            LocalFileServer.SHARED_DIRECTORY_NAME
         ).forEach { directoryName ->
             File(appFilesDir, directoryName)
                 .takeIf { it.exists() }
@@ -297,16 +311,11 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun refreshUploadedFiles() {
-        _uiState.value = _uiState.value.copy(
-            uploadedFiles = getUploadedFiles()
-        )
-    }
     companion object {
+        private const val LOG_TAG = "FileShare"
         private const val MIN_AUTH_CODE = 100000
         private const val AUTH_CODE_RANGE = 900000
         private const val HOME_PAGE_ASSET = "index.html"
-        private const val UPLOAD_DIRECTORY_NAME = "uploaded_files"
         private const val SHARED_DIRECTORY_NAME = "shared_files"
         private const val MAX_FILE_NAME_CHARACTERS = 60
         private val CONTROL_CHARACTERS = Regex("[\\u0000-\\u001F\\u007F]")

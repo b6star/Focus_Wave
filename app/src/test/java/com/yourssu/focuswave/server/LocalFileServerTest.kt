@@ -1,4 +1,4 @@
-package com.yourssu.focuswave.server
+﻿package com.yourssu.focuswave.server
 
 import fi.iki.elonen.NanoHTTPD
 import java.io.ByteArrayOutputStream
@@ -25,14 +25,17 @@ class LocalFileServerTest {
     private lateinit var baseUrl: String
     private lateinit var authToken: String
     private lateinit var authCookie: String
+    private var filesChangedCount = 0
 
     @Before
     fun setUp() {
+        filesChangedCount = 0
         server = LocalFileServer(
             appFilesDirectory = temporaryFolder.root,
             port = 0,
             authCode = AUTH_CODE,
-            homePage = TEST_HOME_PAGE
+            homePage = TEST_HOME_PAGE,
+            onFilesChanged = { filesChangedCount += 1 }
         )
         server.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
         baseUrl = "http://127.0.0.1:${server.listeningPort}"
@@ -130,6 +133,36 @@ class LocalFileServerTest {
     }
 
     @Test
+    fun upload_thenListAndDownloadWithAuthCookie_roundTripsFile() {
+        val uploadResponse = upload("round trip.txt", "hello from pc".toByteArray())
+
+        val listResponse = get("/list", cookie = authCookie)
+        val downloadResponse = get("/download/round%20trip.txt", cookie = authCookie)
+
+        assertEquals(HttpURLConnection.HTTP_OK, uploadResponse.statusCode)
+        assertEquals(HttpURLConnection.HTTP_OK, listResponse.statusCode)
+        assertEquals("""["round trip.txt"]""", listResponse.body)
+        assertEquals(HttpURLConnection.HTTP_OK, downloadResponse.statusCode)
+        assertEquals("hello from pc", downloadResponse.body)
+        assertTrue(
+            downloadResponse.headers.entries
+                .firstOrNull { it.key.equals("Content-Disposition", ignoreCase = true) }
+                ?.value
+                ?.any { it.contains("round%20trip.txt") } == true
+        )
+    }
+
+    @Test
+    fun download_withoutToken_returnsUnauthorized() {
+        upload("private.txt", "private".toByteArray())
+
+        val response = get("/download/private.txt")
+
+        assertEquals(HttpURLConnection.HTTP_UNAUTHORIZED, response.statusCode)
+        assertTrue(response.body.contains("Authentication required"))
+    }
+
+    @Test
     fun list_withCustomTokenHeader_returnsOk() {
         val response = get("/list", token = authToken, useCustomHeader = true)
 
@@ -153,6 +186,7 @@ class LocalFileServerTest {
         assertTrue(response.body.contains("\"success\":true"))
         assertTrue(response.body.contains("\"fileName\":\"notes.txt\""))
         assertTrue(response.body.contains("\"size\":10"))
+        assertEquals(1, filesChangedCount)
     }
 
     @Test

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -76,6 +76,8 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
         }
 
         a {
@@ -92,6 +94,38 @@
             align-items: center;
             gap: 10px;
             cursor: pointer;
+            flex: 1 1 180px;
+            min-width: 0;
+        }
+
+        .checkbox-label input {
+            flex: 0 0 auto;
+        }
+
+        .file-name {
+            flex: 1;
+            min-width: 0;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .file-download {
+            white-space: nowrap;
+            min-width: fit-content;
+            flex-shrink: 0;
+            writing-mode: horizontal-tb;
+            word-break: normal;
+        }
+
+        @media (max-width: 480px) {
+            #fileList li {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .file-download {
+                align-self: flex-end;
+            }
         }
 
         .action-bar {
@@ -168,16 +202,89 @@
     </div>
 </div>
 
-<script>
+<script type="module">
+    import { x25519 } from "https://esm.sh/@noble/curves@1.9.7/ed25519?bundle";
+    import { gcm } from "https://esm.sh/@noble/ciphers@1.3.0/aes?bundle";
+    import { hkdf } from "https://esm.sh/@noble/hashes@1.8.0/hkdf?bundle";
+    import { sha256 } from "https://esm.sh/@noble/hashes@1.8.0/sha2?bundle";
+
     let isAuthenticated = false;
     let fileListRefreshTimer = null;
+    let clientPrivateKey = null;
+    let clientPublicKey = null;
+    let aesKeyBytes = null;
+    const textEncoder = new TextEncoder();
+
+    function bytesToBase64(bytes) {
+        let binary = "";
+        bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+        return btoa(binary);
+    }
+
+    function base64ToBytes(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    function randomBytes(length) {
+        const bytes = new Uint8Array(length);
+        crypto.getRandomValues(bytes);
+        return bytes;
+    }
+
+    function deriveAesKey(sharedSecret) {
+        return hkdf(
+            sha256,
+            sharedSecret,
+            textEncoder.encode("FocusWave FileShare Salt"),
+            textEncoder.encode("FocusWave ECDH AES-GCM v1"),
+            32
+        );
+    }
+
+    async function setupEncryption() {
+        clientPrivateKey = x25519.utils.randomPrivateKey();
+        clientPublicKey = x25519.getPublicKey(clientPrivateKey);
+
+        const response = await fetch("/crypto/exchange", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clientPublicKey: bytesToBase64(clientPublicKey) })
+        });
+
+        if (!response.ok) throw new Error("Key exchange failed");
+
+        const result = await response.json();
+        const serverPublicKey = base64ToBytes(result.serverPublicKey);
+        const sharedSecret = x25519.getSharedSecret(clientPrivateKey, serverPublicKey);
+
+        aesKeyBytes = deriveAesKey(sharedSecret);
+    }
+
+    async function encryptFile(file) {
+        if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
+
+        const nonce = randomBytes(12);
+        const plainBytes = new Uint8Array(await file.arrayBuffer());
+        const aes = gcm(aesKeyBytes, nonce);
+        const encryptedBytes = aes.encrypt(plainBytes);
+
+        return {
+            encryptedBlob: new Blob([encryptedBytes]),
+            nonceBase64: bytesToBase64(nonce)
+        };
+    }
 
     async function verifyCode() {
         const codeInput = document.getElementById('authCodeInput');
         const authStatus = document.getElementById('authStatus');
         const authCard = document.getElementById('authCard');
         const fileShareContainer = document.getElementById('fileShareContainer');
-
         const code = codeInput.value.trim();
 
         if (code.length !== 6) {
@@ -190,11 +297,15 @@
         try {
             const response = await fetch('/auth', {
                 method: 'POST',
+                credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ code: code })
             });
 
             if (response.ok) {
+                authStatus.innerText = "보안 연결 설정 중...";
+                await setupEncryption(); // 사용자 몰래 백그라운드에서 키 교환 수행
+
                 isAuthenticated = true;
                 clearFileShareUi();
                 authCard.style.display = "none";
@@ -210,18 +321,13 @@
                     fetchFileList();
                 }, 2000);
 
-            } else if (response.status === 401) {
+            } else if (response.status === 401 || response.status === 403) {
                 authStatus.innerText = "인증 코드가 올바르지 않습니다.";
-            } else if (response.status === 429) {
-                authStatus.innerText = "인증 실패가 3회 누적되어 1분 동안 접속이 제한됩니다.";
-            } else if (response.status === 403) {
-                authStatus.innerText = "이 기기는 서버 재시작 전까지 접속이 차단되었습니다.";
             } else {
                 authStatus.innerText = "인증 실패: 서버 오류";
             }
         } catch (error) {
             authStatus.innerText = "서버에 연결할 수 없습니다.";
-            console.error(error);
         }
     }
 
@@ -233,31 +339,19 @@
 
         const fileInput = document.getElementById('fileInput');
         const statusText = document.getElementById('uploadStatus');
+        const files = Array.from(fileInput.files);
 
-        if (fileInput.files.length === 0) {
+        if (files.length === 0) {
             alert("파일을 먼저 선택해주세요!");
             return;
         }
 
-        const files = Array.from(fileInput.files);
         let successCount = 0;
 
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
-
-            statusText.innerText = `전송 준비 중... (${i + 1}/${files.length}) ${file.name}`;
-
-            const success = await uploadOneFile(
-                file,
-                i + 1,
-                files.length,
-                statusText
-            );
-
-            if (!success) {
-                return;
-            }
-
+            const success = await uploadOneFile(file, i + 1, files.length, statusText);
+            if (!success) return;
             successCount++;
         }
 
@@ -267,51 +361,64 @@
     }
 
     function uploadOneFile(file, currentIndex, totalCount, statusText) {
-        return new Promise((resolve) => {
-            const formData = new FormData();
-
-            formData.append("files", file);
-            formData.append("fileName_0", file.name);
-
-            const xhr = new XMLHttpRequest();
-            xhr.open(
-                "POST",
-                `/upload?fileName=${encodeURIComponent(file.name)}`,
-                true
-            );
-
-            xhr.upload.onprogress = function(event) {
-                if (event.lengthComputable) {
-                    const percent = Math.round((event.loaded / event.total) * 100);
-                    statusText.innerText =
-                        `전송 중... (${currentIndex}/${totalCount}) ${file.name} - ${percent}%`;
-                } else {
-                    statusText.innerText =
-                        `전송 중... (${currentIndex}/${totalCount}) ${file.name}`;
-                }
-            };
-
-            xhr.onload = function() {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    statusText.innerText =
-                        `전송 완료... (${currentIndex}/${totalCount}) ${file.name}`;
-                    resolve(true);
-                } else if (xhr.status === 401 || xhr.status === 403) {
-                    statusText.innerText = "인증이 만료되었거나 권한이 없습니다.";
+        return new Promise(async (resolve) => {
+            try {
+                if (!aesKeyBytes) {
+                    statusText.innerText = "보안 연결이 끊어졌습니다. 다시 인증해주세요.";
                     resetAuth();
-                    resolve(false);
-                } else {
-                    statusText.innerText = `전송 실패: 서버 에러 (${xhr.status}) - ${file.name}`;
-                    resolve(false);
+                    return resolve(false);
                 }
-            };
 
-            xhr.onerror = function() {
-                statusText.innerText = `서버에 연결할 수 없습니다. - ${file.name}`;
+                statusText.innerText = `전송 준비 중... (${currentIndex}/${totalCount}) ${file.name}`;
+
+                // 전송 전 암호화 수행
+                const encryptedFile = await encryptFile(file);
+
+                const formData = new FormData();
+                formData.append("files", encryptedFile.encryptedBlob, file.name + ".enc");
+                formData.append("fileName_0", file.name);
+                formData.append("nonce", encryptedFile.nonceBase64);
+                formData.append("encrypted", "true");
+
+                // XMLHttpRequest를 사용해 진행률(Progress) 표시 복구
+                const xhr = new XMLHttpRequest();
+                xhr.open("POST", `/upload?fileName=${encodeURIComponent(file.name)}`, true);
+                xhr.withCredentials = true;
+
+                xhr.upload.onprogress = function(event) {
+                    if (event.lengthComputable) {
+                        const percent = Math.round((event.loaded / event.total) * 100);
+                        statusText.innerText = `전송 중... (${currentIndex}/${totalCount}) ${file.name} - ${percent}%`;
+                    } else {
+                        statusText.innerText = `전송 중... (${currentIndex}/${totalCount}) ${file.name}`;
+                    }
+                };
+
+                xhr.onload = function() {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        statusText.innerText = `전송 완료... (${currentIndex}/${totalCount}) ${file.name}`;
+                        resolve(true);
+                    } else if (xhr.status === 401 || xhr.status === 403) {
+                        statusText.innerText = "인증이 만료되었거나 권한이 없습니다.";
+                        resetAuth();
+                        resolve(false);
+                    } else {
+                        statusText.innerText = `전송 실패: 서버 에러 (${xhr.status}) - ${file.name}`;
+                        resolve(false);
+                    }
+                };
+
+                xhr.onerror = function() {
+                    statusText.innerText = `서버에 연결할 수 없습니다. - ${file.name}`;
+                    resolve(false);
+                };
+
+                xhr.send(formData);
+
+            } catch (error) {
+                statusText.innerText = `암호화 또는 전송 실패 - ${file.name}`;
                 resolve(false);
-            };
-
-            xhr.send(formData);
+            }
         });
     }
 
@@ -350,23 +457,19 @@
     }
 
     async function fetchFileList() {
-        if (!isAuthenticated) {
-            return;
-        }
+        if (!isAuthenticated) return;
 
         const listElement = document.getElementById('fileList');
         const selectAllCheckbox = document.getElementById('selectAll');
 
         try {
-            const response = await fetch('/list');
+            const response = await fetch('/list', { credentials: 'same-origin' });
 
             if (response.ok) {
                 const files = await response.json();
                 listElement.innerHTML = "";
 
-                if (selectAllCheckbox) {
-                    selectAllCheckbox.checked = false;
-                }
+                if (selectAllCheckbox) selectAllCheckbox.checked = false;
 
                 if (files.length === 0) {
                     listElement.innerHTML = "<li>폰에 공유 중인 파일이 없습니다.</li>";
@@ -375,7 +478,6 @@
 
                 files.slice().reverse().forEach(fileName => {
                     const li = document.createElement('li');
-
                     const label = document.createElement('label');
                     label.className = "checkbox-label";
 
@@ -384,26 +486,31 @@
                     checkbox.className = "file-checkbox";
                     checkbox.value = fileName;
 
+                    const fileNameText = document.createElement('span');
+                    fileNameText.className = "file-name";
+                    fileNameText.textContent = fileName;
+
                     label.appendChild(checkbox);
-                    label.appendChild(document.createTextNode(" " + fileName));
+                    label.appendChild(fileNameText);
 
                     const downloadBtn = document.createElement('a');
                     downloadBtn.href = `/download/${encodeURIComponent(fileName)}`;
                     downloadBtn.textContent = "다운로드 ⬇️";
                     downloadBtn.download = fileName;
+                    downloadBtn.className = "file-download";
 
                     li.appendChild(label);
                     li.appendChild(downloadBtn);
                     listElement.appendChild(li);
                 });
             } else if (response.status === 401 || response.status === 403) {
-                authStatus.innerText = "인증 코드가 올바르지 않습니다.";
+                listElement.innerHTML = "<li>인증이 만료되었거나 권한이 없습니다.</li>";
+                resetAuth();
             } else {
-                authStatus.innerText = "인증 실패: 서버 오류";
+                listElement.innerHTML = "<li>파일 목록을 가져오지 못했습니다.</li>";
             }
         } catch (error) {
             listElement.innerHTML = "<li>서버(폰)에서 목록을 가져올 수 없습니다.</li>";
-            console.error(error);
         }
     }
 
@@ -414,11 +521,7 @@
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-            const response = await fetch('/ping', {
-                signal: controller.signal
-            });
-
+            const response = await fetch('/ping', { signal: controller.signal });
             clearTimeout(timeoutId);
 
             if (response.ok) {
@@ -435,6 +538,9 @@
 
     function resetAuth() {
         isAuthenticated = false;
+        clientPrivateKey = null;
+        clientPublicKey = null;
+        aesKeyBytes = null;
 
         if (fileListRefreshTimer !== null) {
             clearInterval(fileListRefreshTimer);
@@ -463,15 +569,20 @@
         }
     }
 
-
     document.getElementById('authCodeInput').addEventListener('keyup', function(event) {
         if (event.key === "Enter") {
             verifyCode();
         }
     });
 
+    // module 타입 스크립트 내의 함수들을 전역으로 바인딩
+    window.verifyCode = verifyCode;
+    window.uploadFile = uploadFile;
+    window.toggleSelectAll = toggleSelectAll;
+    window.downloadSelected = downloadSelected;
+
     checkConnection();
     setInterval(checkConnection, 3000);
 </script>
 </body>
-</html>s
+</html>
