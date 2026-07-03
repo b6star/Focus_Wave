@@ -2,6 +2,8 @@ package com.yourssu.focuswave.server
 
 import android.os.Build
 import androidx.annotation.RequiresApi
+import java.io.InputStream
+import java.io.OutputStream
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -9,10 +11,12 @@ import java.security.PublicKey
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 import javax.crypto.Cipher
+import javax.crypto.CipherInputStream
 import javax.crypto.KeyAgreement
 import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 object FileShareCrypto {
@@ -82,6 +86,29 @@ object FileShareCrypto {
         val gcmParameterSpec = GCMParameterSpec(128, nonceBytes)
         cipher.init(Cipher.DECRYPT_MODE, aesKey, gcmParameterSpec)
         return cipher.doFinal(encryptedBytes)
+    }
+
+
+    fun decryptAesCbcStream(
+        encryptedInputStream: InputStream,
+        decryptedOutputStream: OutputStream,
+        nonceBytes: ByteArray, // IV로 사용됨
+        aesKey: SecretKey
+    ) {
+        // 호환성이 가장 좋은 CBC 모드와 PKCS5Padding을 사용합니다.
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        val ivSpec = IvParameterSpec(nonceBytes)
+
+        cipher.init(Cipher.DECRYPT_MODE, aesKey, ivSpec)
+
+        // 8KB씩 청크 단위로 나누어 처리
+        CipherInputStream(encryptedInputStream, cipher).use { cipherStream ->
+            val buffer = ByteArray(8 * 1024)
+            var read: Int
+            while (cipherStream.read(buffer).also { read = it } != -1) {
+                decryptedOutputStream.write(buffer, 0, read)
+            }
+        }
     }
 
     private fun hkdfSha256(inputKeyMaterial: ByteArray, salt: ByteArray, info: ByteArray, outputLength: Int): ByteArray {

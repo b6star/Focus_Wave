@@ -426,36 +426,66 @@ class LocalFileServer(
 
         logDebug("upload received: name=$safeFileName, size=${temporaryFile.length()}")
         return try {
-            val encryptedBytes =
-                temporaryFile.readBytes()
+            val storedFile = saveUploadedFileStream(
+                temporaryFile = temporaryFile,
+                safeFileName = safeFileName,
+                nonceBytes = nonceBytes,
+                aesKey = aesKey
+            )
 
-            val plainBytes =
-                FileShareCrypto.decryptAesGcm(
-                    encryptedBytes = encryptedBytes,
-                    nonceBytes = nonceBytes,
-                    aesKey = aesKey
-                )
-
-            val storedFile =
-                saveUploadedFileBytes(
-                    plainBytes,
-                    safeFileName
-                )
             logDebug(
                 "upload saved: path=${storedFile.absolutePath}, " +
-                    "exists=${storedFile.exists()}, size=${storedFile.length()}"
+                        "exists=${storedFile.exists()}, size=${storedFile.length()}"
             )
             notifyFilesChanged()
             jsonResponse(
                 Response.Status.OK,
                 """{"success":true,"fileName":${jsonString(storedFile.name)},"size":${storedFile.length()}}"""
             )
-        } catch (error: IOException) {
+        } catch (error: Exception) { // IOException 외의 암호화 에러도 잡기 위해 Exception으로 넓힘
             logDebug("upload save failed: reason=${error.message}")
             uploadError(
                 Response.Status.INTERNAL_ERROR,
                 "Failed to save file"
             )
+        }
+    }
+
+    private fun saveUploadedFileStream(
+        temporaryFile: File,
+        safeFileName: String,
+        nonceBytes: ByteArray,
+        aesKey: SecretKey
+    ): File = synchronized(fileSaveLock) {
+        val directory = getOrCreateReceivedDirectory()
+        val destination = resolveUniqueFile(directory, safeFileName)
+
+        if (destination.canonicalFile.parentFile != directory.canonicalFile) {
+            throw IOException("Invalid file path")
+        }
+
+        try {
+            // 임시 파일(암호화 상태)을 읽어오는 스트림
+            temporaryFile.inputStream().use { encryptedInput ->
+                // 최종 저장 파일에 쓰는 스트림
+                destination.outputStream().use { decryptedOutput ->
+                    // FileShareCrypto의 CTR 스트림 복호화 호출
+                    FileShareCrypto.decryptAesCbcStream(
+                        encryptedInputStream = encryptedInput,
+                        decryptedOutputStream = decryptedOutput,
+                        nonceBytes = nonceBytes,
+                        aesKey = aesKey
+                    )
+                }
+            }
+
+            if (!destination.isFile) {
+                throw IOException("Stored file verification failed")
+            }
+            destination
+        } catch (error: Exception) {
+            destination.delete() // 실패하면 찌꺼기 파일 삭제
+            throw IOException("Stream decryption failed: ${error.message}", error)
         }
     }
 
