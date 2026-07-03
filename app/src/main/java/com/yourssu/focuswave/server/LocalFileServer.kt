@@ -8,6 +8,8 @@ import java.security.SecureRandom
 import java.text.Normalizer
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
 
 class LocalFileServer(
     private val appFilesDirectory: File,
@@ -19,6 +21,15 @@ class LocalFileServer(
 ) : NanoHTTPD(port) {
     private val fileSaveLock = Any()
     private val activeTokens = ConcurrentHashMap.newKeySet<String>()
+
+    private val groupAesKey: SecretKey = generateGroupAesKey()
+    private val authAttempts = ConcurrentHashMap<String, AuthAttempt>()
+
+    private data class AuthAttempt(
+        var failCount: Int = 0,
+        var blockedUntilMillis: Long = 0L,
+        var banned: Boolean = false
+    )
 
     override fun stop() {
         activeTokens.clear()
@@ -76,6 +87,18 @@ class LocalFileServer(
     }
 
     private fun handleAuth(session: IHTTPSession): Response {
+        val clientIp = session.remoteIpAddress ?: "unknown"
+        val attempt = authAttempts.getOrPut(clientIp) { AuthAttempt() }
+        val now = System.currentTimeMillis()
+
+        if (attempt.banned) {
+            return  jsonError(Response.Status.FORBIDDEN, "This IP is blocked until server restart")
+        }
+
+        if (attempt.blockedUntilMillis > now) {
+            return jsonError(Response.Status.TOO_MANY_REQUESTS, "Too many failed attempts, Try again later")
+        }
+
         val mediaType = session.headers["content-type"]
             .orEmpty()
             .substringBefore(';')
@@ -96,8 +119,22 @@ class LocalFileServer(
             ?.groupValues
             ?.get(1)
         if (submittedCode == null || !codesMatch(submittedCode, authCode)) {
+            attempt.failCount++
+
+            if (attempt.failCount >= 6) {
+                attempt.banned = true
+                return jsonError(Response.Status.FORBIDDEN, "This IP is blocked until server restart")
+            }
+
+            if (attempt.failCount == 3) {
+                attempt.blockedUntilMillis = now + 60_000L
+                return jsonError(Response.Status.TOO_MANY_REQUESTS, "Too many failed attempts. Try again after 1 minute")
+            }
+
             return unauthorizedResponse("Invalid authentication code")
         }
+
+        authAttempts.remove(clientIp)
 
         val token = generateToken()
         activeTokens.add(token)
@@ -426,6 +463,16 @@ class LocalFileServer(
         append('"')
     }
 
+    private fun generateGroupAesKey(): SecretKey {
+        val keyGenerator = KeyGenerator.getInstance("AES")
+        keyGenerator.init(256, secureRandom)
+        return keyGenerator.generateKey()
+    }
+
+    private fun getGroupAesKeyBytes(): ByteArray {
+        return groupAesKey.encoded
+    }
+
     companion object {
         const val PORT = 8080
 
@@ -444,10 +491,9 @@ class LocalFileServer(
         private const val TOKEN_HEADER_NAME = "x-focuswave-token"
         private const val TOKEN_COOKIE_NAME = "FocusWave-Token"
         private const val BEARER_PREFIX = "Bearer "
-        private val AUTH_CODE_PATTERN = Regex(""""code"\s*:\s*"(\d{4})"""")
+        private val AUTH_CODE_PATTERN = Regex(""""code"\s*:\s*"(\d{6})"""")
         private val CONTROL_CHARACTERS = Regex("[\\u0000-\\u001F\\u007F]")
         private val UNSAFE_FILE_NAME_CHARACTERS = Regex("""[/:*?"<>|]""")
-
         private val FALLBACK_HOME_PAGE = """
             <!doctype html>
             <html lang="ko">

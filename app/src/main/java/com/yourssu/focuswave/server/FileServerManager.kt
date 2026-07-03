@@ -303,8 +303,8 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         )
     }
     companion object {
-        private const val MIN_AUTH_CODE = 1000
-        private const val AUTH_CODE_RANGE = 9000
+        private const val MIN_AUTH_CODE = 100000
+        private const val AUTH_CODE_RANGE = 900000
         private const val HOME_PAGE_ASSET = "index.html"
         private const val UPLOAD_DIRECTORY_NAME = "uploaded_files"
         private const val SHARED_DIRECTORY_NAME = "shared_files"

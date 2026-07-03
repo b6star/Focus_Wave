@@ -124,14 +124,14 @@
 
 <div id="authCard" class="card">
     <h2>🔐 인증 코드 입력</h2>
-    <p>폰 화면에 표시된 4자리 인증 코드를 입력하세요.</p>
+    <p>폰 화면에 표시된 6자리 인증 코드를 입력하세요.</p>
 
     <input
             type="text"
             id="authCodeInput"
-            maxlength="4"
+            maxlength="6"
             inputmode="numeric"
-            placeholder="예: 1234"
+            placeholder="예: 123456"
     >
 
     <button onclick="verifyCode()">접속하기</button>
@@ -180,8 +180,8 @@
 
         const code = codeInput.value.trim();
 
-        if (code.length !== 4) {
-            authStatus.innerText = "4자리 인증 코드를 입력해주세요.";
+        if (code.length !== 6) {
+            authStatus.innerText = "6자리 인증 코드를 입력해주세요.";
             return;
         }
 
@@ -210,8 +210,12 @@
                     fetchFileList();
                 }, 2000);
 
-            } else if (response.status === 401 || response.status === 403) {
+            } else if (response.status === 401) {
                 authStatus.innerText = "인증 코드가 올바르지 않습니다.";
+            } else if (response.status === 429) {
+                authStatus.innerText = "인증 실패가 3회 누적되어 1분 동안 접속이 제한됩니다.";
+            } else if (response.status === 403) {
+                authStatus.innerText = "이 기기는 서버 재시작 전까지 접속이 차단되었습니다.";
             } else {
                 authStatus.innerText = "인증 실패: 서버 오류";
             }
@@ -393,10 +397,9 @@
                     listElement.appendChild(li);
                 });
             } else if (response.status === 401 || response.status === 403) {
-                listElement.innerHTML = "<li>인증이 만료되었거나 권한이 없습니다.</li>";
-                resetAuth();
+                authStatus.innerText = "인증 코드가 올바르지 않습니다.";
             } else {
-                listElement.innerHTML = "<li>파일 목록을 가져오지 못했습니다.</li>";
+                authStatus.innerText = "인증 실패: 서버 오류";
             }
         } catch (error) {
             listElement.innerHTML = "<li>서버(폰)에서 목록을 가져올 수 없습니다.</li>";
@@ -471,4 +474,4 @@
     setInterval(checkConnection, 3000);
 </script>
 </body>
-</html>
+</html>s
