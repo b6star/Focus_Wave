@@ -30,12 +30,17 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     fun startServer() {
         if (server != null) return
 
+        clearFileShareRecords()
+
         val authCode = generateAuthCode()
         val application = getApplication<Application>()
         val newServer = LocalFileServer(
             appFilesDirectory = application.filesDir,
             authCode = authCode,
-            homePage = loadHomePage()
+            homePage = loadHomePage(),
+            onFileUploaded = {
+                refreshUploadedFiles()
+            }
         )
         try {
             newServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
@@ -51,7 +56,8 @@ class FileServerManager(application: Application) : AndroidViewModel(application
                     "같은 Wi-Fi에 연결해주세요."
                 } else {
                     "PC 브라우저에서 아래 주소로 접속하세요."
-                }
+                },
+                uploadedFiles = getUploadedFiles()
             )
         } catch (error: Exception) {
             newServer.stop()
@@ -90,7 +96,10 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             } ?: emptyList()
     }
 
-    fun shareFiles(files: List<SharedFileUi>) {
+    fun shareFiles(
+        files: List<SharedFileUi>,
+        onProgress: (fileId: String, percent: Int) -> Unit
+    ) {
         val application = getApplication<Application>()
         val directory = getOrCreateSharedDirectory()
 
@@ -103,11 +112,38 @@ class FileServerManager(application: Application) : AndroidViewModel(application
 
             val destination = resolveUniqueFile(directory, safeFileName)
 
+            val totalBytes = file.sizeBytes.takeIf { it > 0 }
+                ?: application.contentResolver.openFileDescriptor(sourceUri, "r")?.use {
+                    it.statSize
+                }
+                ?: -1L
+
+            var copiedBytes = 0L
+            val buffer = ByteArray(1024 * 1024)
+
             application.contentResolver.openInputStream(sourceUri)?.use { input ->
                 destination.outputStream().use { output ->
-                    input.copyTo(output)
+                    while (true) {
+                        val readBytes = input.read(buffer)
+                        if (readBytes == -1) break
+
+                        output.write(buffer, 0, readBytes)
+                        copiedBytes += readBytes
+
+                        if (totalBytes > 0) {
+                            val percent = ((copiedBytes * 100) / totalBytes)
+                                .toInt()
+                                .coerceIn(0, 100)
+
+                            onProgress(file.id, percent)
+                        }
+                    }
+
+                    output.flush()
                 }
-            } ?: throw IOException("Cannot open selected file")
+            }
+
+            onProgress(file.id, 100)
         }
     }
 
@@ -238,7 +274,11 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         }
     }
 
-
+    fun refreshUploadedFiles() {
+        _uiState.value = _uiState.value.copy(
+            uploadedFiles = getUploadedFiles()
+        )
+    }
     companion object {
         private const val MIN_AUTH_CODE = 1000
         private const val AUTH_CODE_RANGE = 9000

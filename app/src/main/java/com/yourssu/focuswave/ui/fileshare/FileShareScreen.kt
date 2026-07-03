@@ -29,8 +29,22 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.server.FileShareUiState
 import kotlinx.coroutines.launch
-import android.content.Intent
-import androidx.core.content.FileProvider
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import android.graphics.BitmapFactory
+import android.widget.MediaController
+import android.widget.VideoView
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import java.io.File
 
 
 data class SharedFileUi(
@@ -66,10 +80,6 @@ fun FileShareOverlay(
         }
     }
 
-    var receivedFiles by remember {
-        mutableStateOf<List<SharedFileUi>>(emptyList())
-    }
-
     var selectedFiles by remember {
         mutableStateOf<List<SharedFileUi>>(emptyList())
     }
@@ -85,11 +95,17 @@ fun FileShareOverlay(
         }
     }
 
+    var sendProgressMap by remember {
+        mutableStateOf<Map<String, Int>>(emptyMap())
+    }
+
     val clipboardManager = LocalClipboardManager.current
     val pcAccessUrl = uiState.serverAddress.orEmpty()
 
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
+
+    var previewFile by remember { mutableStateOf<SharedFileUi?>(null) }
 
     Box(
         modifier = modifier
@@ -116,7 +132,6 @@ fun FileShareOverlay(
                 onStartClick = onStartClick,
                 onStopClick = {
                     onStopClick()
-                    receivedFiles = emptyList()
                     selectedFiles = emptyList()
                 }
             )
@@ -181,9 +196,9 @@ fun FileShareOverlay(
                 ) { page ->
                     when (page) {
                         0 -> PcToPhoneSection(
-                            receivedFiles = receivedFiles,
-                            onRefreshClick = {
-                                receivedFiles = fileServerManager.getUploadedFiles()
+                            receivedFiles = uiState.uploadedFiles.reversed(),
+                            onPreviewClick = { file ->
+                                previewFile = file
                             },
                             onSaveClick = { file ->
                                 fileToSave = file
@@ -193,20 +208,40 @@ fun FileShareOverlay(
 
                         1 -> PhoneToPcSection(
                             selectedFiles = selectedFiles,
+                            sendProgressMap = sendProgressMap,
                             onPickFileClick = {
                                 filePickerLauncher.launch(arrayOf("*/*"))
                             },
                             onRemoveFileClick = { targetFile ->
                                 selectedFiles = selectedFiles.filterNot { it.id == targetFile.id }
+                                sendProgressMap = sendProgressMap - targetFile.id
                             },
                             onSendClick = {
-                                fileServerManager.shareFiles(selectedFiles)
-                                selectedFiles = emptyList()
+                                coroutineScope.launch {
+                                    selectedFiles.forEach { file ->
+                                        sendProgressMap = sendProgressMap + (file.id to 0)
+                                    }
+
+                                    fileServerManager.shareFiles(selectedFiles) { fileId, percent ->
+                                        sendProgressMap = sendProgressMap + (fileId to percent)
+                                    }
+                                }
                             }
                         )
                     }
                 }
             }
+            previewFile?.let { file ->
+                FilePreviewDialog(
+                    file = file,
+                    onDismiss = { previewFile = null },
+                    onSaveClick = { // 미리보기 창에서 다운로드 버튼을 눌렀을 때 다운
+                            fileToSave = file
+                            saveFileLauncher.launch(file.name)
+                    }
+                )
+            }
+
         }
     }
 }
@@ -317,8 +352,8 @@ private fun ConnectionStatusCard(
 @Composable
 private fun PcToPhoneSection(
     receivedFiles: List<SharedFileUi>,
-    onRefreshClick: () -> Unit,
-    onSaveClick: (SharedFileUi) -> Unit
+    onSaveClick: (SharedFileUi) -> Unit,
+    onPreviewClick: (SharedFileUi) -> Unit
 ) {
     SectionCard {
 
@@ -334,17 +369,6 @@ private fun PcToPhoneSection(
             style = MaterialTheme.typography.bodySmall
         )
 
-        Button(
-            onClick = onRefreshClick,
-            modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF8A86E6),
-                contentColor = Color.White
-            )
-        ) {
-            Text("받은 파일 새로고침")
-        }
-
         if (receivedFiles.isEmpty()) {
             EmptyText("아직 PC에서 받은 파일이 없습니다.")
         } else {
@@ -355,8 +379,10 @@ private fun PcToPhoneSection(
                 items(receivedFiles) { file ->
                     FileRow(
                         file = file,
+                        showPreviewButton = file.isPreviewable(),
                         actionText = "저장",
-                        onActionClick = { onSaveClick(file) }
+                        onActionClick = { onSaveClick(file) },
+                        onPreviewClick = { onPreviewClick(file) }
                     )
                 }
             }
@@ -367,6 +393,7 @@ private fun PcToPhoneSection(
 @Composable
 private fun PhoneToPcSection(
     selectedFiles: List<SharedFileUi>,
+    sendProgressMap: Map<String, Int>,
     onPickFileClick: () -> Unit,
     onRemoveFileClick: (SharedFileUi) -> Unit,
     onSendClick: () -> Unit
@@ -423,7 +450,9 @@ private fun PhoneToPcSection(
                     FileRow(
                         file = file,
                         actionText = "삭제",
-                        onActionClick = { onRemoveFileClick(file) }
+                        progress = sendProgressMap[file.id],
+                        onActionClick = { onRemoveFileClick(file) },
+                        onPreviewClick = {}
                     )
                 }
             }
@@ -469,6 +498,7 @@ private fun PcAccessInfoCard(
     onCopyClick: () -> Unit,
     onRefreshClick: () -> Unit
 ) {
+    var isCodeVisible by remember { mutableStateOf(true) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -513,14 +543,31 @@ private fun PcAccessInfoCard(
                 style = MaterialTheme.typography.bodyMedium
             )
 
-            Spacer(modifier = Modifier.width(16.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
             Text(
-                text = uiState.authCode.toString(),
+                text = if (isCodeVisible) uiState.authCode.toString() else "****",
                 color = Color(0xFFFFD700),
                 style = MaterialTheme.typography.titleMedium
             )
-            Spacer(modifier = Modifier.width(16.dp))
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Icon(
+                imageVector = if (isCodeVisible)
+                    Icons.Default.VisibilityOff
+                else
+                    Icons.Default.Visibility,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.75f),
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable {
+                        isCodeVisible = !isCodeVisible
+                    }
+            )
+
+            Spacer(modifier = Modifier.width(48.dp))
             Text(
                 text = "재발급",
                 color = Color(0xFF8A86E6),
@@ -546,8 +593,11 @@ private fun PcAccessInfoCard(
 @Composable
 private fun FileRow(
     file: SharedFileUi,
+    showPreviewButton: Boolean = false,
     actionText: String,
-    onActionClick: () -> Unit
+    progress: Int? = null,
+    onActionClick: () -> Unit,
+    onPreviewClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -571,8 +621,189 @@ private fun FileRow(
             )
         }
 
+        progress?.let {
+            Text(
+                text = if (it >= 100) "완료" else "$it%",
+                color = Color(0xFFFFD700),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(end = 8.dp)
+            )
+        }
+
+        if (showPreviewButton && onPreviewClick != null) {
+            TextButton(onClick = onPreviewClick) {
+                Text("열기")
+            }
+        }
+
         TextButton(onClick = onActionClick) {
             Text(actionText)
+        }
+    }
+}
+
+@Composable
+private fun FilePreviewDialog(
+    file: SharedFileUi,
+    onDismiss: () -> Unit,
+    onSaveClick: () -> Unit
+) {
+    val sourceFile = remember(file) {
+        file.uriString?.let { uriString ->
+            val uri = Uri.parse(uriString)
+            if (uri.scheme == "file") {
+                uri.path?.let { path -> File(path) }
+            } else {
+                null
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.92f)
+                .background(Color(0xFF2A2F45), RoundedCornerShape(18.dp))
+                .border(
+                    BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                    RoundedCornerShape(18.dp)
+                )
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = file.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onSaveClick) {
+                    Text("저장")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("닫기")
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(Color.Black.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (sourceFile == null || !sourceFile.exists()) {
+                    Text(
+                        text = "파일을 찾을 수 없습니다.",
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                } else {
+                    FilePreviewContent(
+                        file = sourceFile,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilePreviewContent(
+    file: File,
+    modifier: Modifier = Modifier
+) {
+    val extension = file.extension.lowercase()
+    when (extension) {
+        "jpg", "jpeg", "png", "webp" -> {
+            val bitmap = remember(file) {
+                BitmapFactory.decodeFile(file.absolutePath)
+            }
+
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = modifier,
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                Text("이미지를 불러올 수 없습니다.")
+            }
+        }
+        "mp4", "mkv", "webm" -> {
+            AndroidView(
+                modifier = modifier,
+                factory = { context ->
+                    VideoView(context).apply {
+                        setVideoURI(Uri.fromFile(file))
+                        setMediaController(MediaController(context))
+                        start()
+                    }
+                }
+            )
+        }
+
+        "mp3", "wav", "m4a", "aac" -> {
+            AndroidView(
+                modifier = modifier,
+                factory = { context ->
+                    VideoView(context).apply {
+                        setVideoURI(Uri.fromFile(file))
+                        setMediaController(MediaController(context))
+                        start()
+                    }
+                }
+            )
+        }
+
+        "txt", "log", "csv", "json", "xml",
+        "kt", "java", "kts",
+        "c", "cpp", "cc", "h", "hpp",
+        "py",
+        "js", "ts",
+        "html", "css",
+        "md",
+        "gradle", "properties",
+        "yml", "yaml",
+        "sql",
+        "sh", "bat",
+        "go", "rs", "swift",
+        "php", "rb",
+        "ini", "conf"
+            -> {
+            val text = remember(file) {
+                runCatching {
+                    file.readText()
+                }.getOrElse {
+                    "텍스트 파일을 읽을 수 없습니다."
+                }
+            }
+
+            SelectionContainer {
+                Text(
+                    text = text,
+                    color = Color.White.copy(alpha = 0.9f),
+                    modifier = modifier.verticalScroll(rememberScrollState())
+                )
+            }
+        }
+
+        else -> {
+            Text("이 파일 형식은 아직 앱 내부 미리보기를 지원하지 않습니다.")
         }
     }
 }
@@ -630,3 +861,54 @@ fun Long.toFileSizeText(): String {
         else -> "$this B"
     }
 }
+
+
+private fun SharedFileUi.isPreviewable(): Boolean {
+    val lowerName = name.lowercase()
+
+    return lowerName.endsWith(".jpg") ||
+            lowerName.endsWith(".jpeg") ||
+            lowerName.endsWith(".png") ||
+            lowerName.endsWith(".webp") ||
+            lowerName.endsWith(".mp4") ||
+            lowerName.endsWith(".mkv") ||
+            lowerName.endsWith(".webm") ||
+            lowerName.endsWith(".mp3") ||
+            lowerName.endsWith(".wav") ||
+            lowerName.endsWith(".m4a") ||
+            lowerName.endsWith(".aac") ||
+            lowerName.endsWith(".txt") ||
+            lowerName.endsWith(".log") ||
+            lowerName.endsWith(".csv") ||
+            lowerName.endsWith(".json") ||
+            lowerName.endsWith(".xml") ||
+            lowerName.endsWith(".kt") ||
+            lowerName.endsWith(".java") ||
+            lowerName.endsWith(".kts") ||
+            lowerName.endsWith(".c") ||
+            lowerName.endsWith(".cpp") ||
+            lowerName.endsWith(".cc") ||
+            lowerName.endsWith(".h") ||
+            lowerName.endsWith(".hpp") ||
+            lowerName.endsWith(".py") ||
+            lowerName.endsWith(".js") ||
+            lowerName.endsWith(".ts") ||
+            lowerName.endsWith(".html") ||
+            lowerName.endsWith(".css") ||
+            lowerName.endsWith(".md") ||
+            lowerName.endsWith(".gradle") ||
+            lowerName.endsWith(".properties") ||
+            lowerName.endsWith(".yml") ||
+            lowerName.endsWith(".yaml") ||
+            lowerName.endsWith(".sql") ||
+            lowerName.endsWith(".sh") ||
+            lowerName.endsWith(".bat") ||
+            lowerName.endsWith(".go") ||
+            lowerName.endsWith(".rs") ||
+            lowerName.endsWith(".swift") ||
+            lowerName.endsWith(".php") ||
+            lowerName.endsWith(".rb") ||
+            lowerName.endsWith(".ini") ||
+            lowerName.endsWith(".conf")
+}
+

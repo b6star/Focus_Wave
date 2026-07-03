@@ -14,7 +14,8 @@ class LocalFileServer(
     port: Int = PORT,
     private val authCode: String,
     private val homePage: String? = null,
-    private val secureRandom: SecureRandom = SecureRandom()
+    private val secureRandom: SecureRandom = SecureRandom(),
+    private val onFileUploaded: () -> Unit = {}
 ) : NanoHTTPD(port) {
     private val fileSaveLock = Any()
     private val activeTokens = ConcurrentHashMap.newKeySet<String>()
@@ -209,6 +210,7 @@ class LocalFileServer(
 
         return try {
             val storedFile = saveUploadedFile(temporaryFile, safeFileName)
+            onFileUploaded()
             jsonResponse(
                 Response.Status.OK,
                 """{"success":true,"fileName":${jsonString(storedFile.name)},"size":${storedFile.length()}}"""
