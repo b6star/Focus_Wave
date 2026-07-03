@@ -1,9 +1,10 @@
-package com.yourssu.focuswave.server
+﻿package com.yourssu.focuswave.server
 
 import android.app.Application
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import fi.iki.elonen.NanoHTTPD
 import java.net.Inet4Address
@@ -12,6 +13,7 @@ import java.security.SecureRandom
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 class FileServerManager(application: Application) : AndroidViewModel(application) {
     private var server: LocalFileServer? = null
@@ -28,13 +30,19 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         val newServer = LocalFileServer(
             appFilesDirectory = application.filesDir,
             authCode = authCode,
-            homePage = loadHomePage()
+            homePage = loadHomePage(),
+            onFilesChanged = ::onSharedFilesChanged
         )
         try {
             newServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
             server = newServer
 
             val serverAddress = findWifiServerAddress()
+            Log.d(
+                LOG_TAG,
+                "server started: address=${serverAddress ?: "unavailable"}, " +
+                    "port=${LocalFileServer.PORT}"
+            )
             _uiState.value = FileShareUiState(
                 isRunning = true,
                 serverAddress = serverAddress,
@@ -54,7 +62,15 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         }
     }
 
+    private fun onSharedFilesChanged() {
+        _uiState.update { state ->
+            state.copy(filesRevision = state.filesRevision + 1L)
+        }
+        Log.d(LOG_TAG, "shared files changed")
+    }
+
     fun stopServer() {
+        Log.d(LOG_TAG, "server stopped")
         server?.stop()
         server = null
         _uiState.value = FileShareUiState()
@@ -97,6 +113,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     }
 
     companion object {
+        private const val LOG_TAG = "FileShare"
         private const val MIN_AUTH_CODE = 1000
         private const val AUTH_CODE_RANGE = 9000
         private const val HOME_PAGE_ASSET = "index.html"

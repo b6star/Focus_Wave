@@ -1,11 +1,19 @@
-package com.yourssu.focuswave.ui.fileshare
+﻿package com.yourssu.focuswave.ui.fileshare
 
+import android.content.ContentValues
+import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,12 +28,22 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import com.yourssu.focuswave.server.FileShareUiState
+import com.yourssu.focuswave.server.LocalFileServer
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
+import java.text.DateFormat
+import java.text.Normalizer
+import java.util.Date
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 
 data class SharedFileUi(
@@ -58,6 +76,14 @@ fun FileShareOverlay(
         mutableStateOf<List<SharedFileUi>>(emptyList())
     }
 
+    var fileMessage by remember {
+        mutableStateOf<String?>(null)
+    }
+
+    var fileErrorMessage by remember {
+        mutableStateOf<String?>(null)
+    }
+
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris: List<Uri> ->
@@ -74,17 +100,88 @@ fun FileShareOverlay(
 
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
+    val screenScrollState = rememberScrollState()
+
+    fun refreshSharedFiles(showMessage: Boolean = true) {
+        coroutineScope.launch {
+            fileErrorMessage = null
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    context.loadSharedFiles()
+                }
+            }.onSuccess { files ->
+                receivedFiles = files
+                if (showMessage) {
+                    fileMessage = "공유 파일 ${files.size}개를 불러왔습니다."
+                }
+            }.onFailure { error ->
+                fileMessage = null
+                fileErrorMessage = error.localizedMessage ?: "파일 목록을 불러오지 못했습니다."
+            }
+        }
+    }
+
+    fun saveReceivedFileToDownloads(file: SharedFileUi) {
+        Log.d(FILE_SHARE_LOG_TAG, "download button clicked: name=${file.name}")
+        coroutineScope.launch {
+            fileErrorMessage = null
+            val result = context.saveSharedFileToDownloads(file.name)
+            if (result.isSuccess) {
+                fileMessage = result.message
+            } else {
+                fileMessage = null
+                fileErrorMessage = result.message
+            }
+        }
+    }
+
+    fun stageSelectedFilesForPc() {
+        if (!uiState.isRunning) {
+            fileMessage = null
+            fileErrorMessage = "PC에서 다운로드하려면 서버를 먼저 시작해주세요."
+            return
+        }
+
+        coroutineScope.launch {
+            fileErrorMessage = null
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    context.stageFilesForPc(selectedFiles)
+                }
+            }.onSuccess { sharedCount ->
+                selectedFiles = emptyList()
+                fileMessage = "${sharedCount}개 파일을 PC 다운로드 목록에 추가했습니다."
+                refreshSharedFiles(showMessage = false)
+            }.onFailure { error ->
+                fileMessage = null
+                fileErrorMessage = error.localizedMessage ?: "파일 공유 준비에 실패했습니다."
+            }
+        }
+    }
+
+    LaunchedEffect(uiState.filesRevision) {
+        refreshSharedFiles(showMessage = false)
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f)),
-        contentAlignment = Alignment.Center
+            .background(Color.Black.copy(alpha = 0.55f))
+            .windowInsetsPadding(
+                WindowInsets.safeDrawing.only(WindowInsetsSides.Vertical)
+            ),
+        contentAlignment = Alignment.TopCenter
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(18.dp)
+                .verticalScroll(screenScrollState)
+                .padding(
+                    start = 18.dp,
+                    top = 18.dp,
+                    end = 18.dp,
+                    bottom = 48.dp
+                )
                 .background(Color(0xFF1E1E2E), RoundedCornerShape(18.dp))
                 .border(
                     BorderStroke(1.dp, Color.White.copy(alpha = 0.2f)),
@@ -103,8 +200,15 @@ fun FileShareOverlay(
 
             PcAccessInfoCard(
                 pcAccessUrl = pcAccessUrl,
-                onCopyClick = {
+                isServerRunning = uiState.isRunning,
+                authCode = uiState.authCode,
+                onCopyUrlClick = {
                     clipboardManager.setText(AnnotatedString(pcAccessUrl))
+                },
+                onCopyAuthCodeClick = {
+                    uiState.authCode?.let { authCode ->
+                        clipboardManager.setText(AnnotatedString(authCode))
+                    }
                 }
             )
 
@@ -136,7 +240,7 @@ fun FileShareOverlay(
                     )
 
                     FileShareTabButton(
-                        text = "파일 보내기",
+                        text = "PC에서 다운로드",
                         selected = pagerState.currentPage == 1,
                         selectedColor = Color(0xFFE68A86),
                         onClick = {
@@ -145,6 +249,22 @@ fun FileShareOverlay(
                             }
                         },
                         modifier = Modifier.weight(1f)
+                    )
+                }
+
+                fileMessage?.let { message ->
+                    Text(
+                        text = message,
+                        color = Color(0xFF8BE9A8),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+
+                fileErrorMessage?.let { message ->
+                    Text(
+                        text = message,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
 
@@ -158,15 +278,16 @@ fun FileShareOverlay(
                         0 -> PcToPhoneSection(
                             receivedFiles = receivedFiles,
                             onRefreshClick = {
-                                // TODO
+                                refreshSharedFiles()
                             },
                             onSaveClick = { file ->
-                                // TODO
+                                saveReceivedFileToDownloads(file)
                             }
                         )
 
                         1 -> PhoneToPcSection(
                             selectedFiles = selectedFiles,
+                            isServerRunning = uiState.isRunning,
                             onPickFileClick = {
                                 filePickerLauncher.launch(arrayOf("*/*"))
                             },
@@ -174,7 +295,7 @@ fun FileShareOverlay(
                                 selectedFiles = selectedFiles.filterNot { it.id == targetFile.id }
                             },
                             onSendClick = {
-                                // TODO
+                                stageSelectedFilesForPc()
                             }
                         )
                     }
@@ -328,7 +449,7 @@ private fun PcToPhoneSection(
                 items(receivedFiles) { file ->
                     FileRow(
                         file = file,
-                        actionText = "저장",
+                        actionText = "Downloads에 저장",
                         onActionClick = { onSaveClick(file) }
                     )
                 }
@@ -340,6 +461,7 @@ private fun PcToPhoneSection(
 @Composable
 private fun PhoneToPcSection(
     selectedFiles: List<SharedFileUi>,
+    isServerRunning: Boolean,
     onPickFileClick: () -> Unit,
     onRemoveFileClick: (SharedFileUi) -> Unit,
     onSendClick: () -> Unit
@@ -357,7 +479,7 @@ private fun PhoneToPcSection(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "PC로 보낼 파일을 선택합니다.",
+                text = "선택한 파일을 폰 서버에 공유하면 PC 웹에서 다운로드할 수 있습니다.",
                 color = Color.White.copy(alpha = 0.7f),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -405,6 +527,7 @@ private fun PhoneToPcSection(
 
             Button(
                 onClick = onSendClick,
+                enabled = isServerRunning,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp),
@@ -414,7 +537,7 @@ private fun PhoneToPcSection(
                 )
             ) {
                 Text(
-                    text = "PC로 전송",
+                    text = "PC 다운로드 목록에 추가",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -440,18 +563,22 @@ private fun SectionCard(
 @Composable
 private fun PcAccessInfoCard(
     pcAccessUrl: String,
-    onCopyClick: () -> Unit
+    isServerRunning: Boolean,
+    authCode: String?,
+    onCopyUrlClick: () -> Unit,
+    onCopyAuthCodeClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 12.dp, vertical = 12.dp)
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Text(
-            text = "PC 접속 정보",
-            color = Color.White,
-            style = MaterialTheme.typography.titleSmall
+            text = "PC 접속 주소",
+            color = Color.White.copy(alpha = 0.72f),
+            style = MaterialTheme.typography.labelMedium
         )
 
         Row(
@@ -469,15 +596,47 @@ private fun PcAccessInfoCard(
                 style = MaterialTheme.typography.titleMedium
             )
             TextButton(
-                onClick = onCopyClick,
+                onClick = onCopyUrlClick,
                 enabled = pcAccessUrl.isNotBlank()
             ) {
                 Text("복사")
             }
         }
 
+        HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
+
         Text(
-            text = "PC 브라우저에서 같은 Wi-Fi의 위 주소로 접속하세요.",
+            text = "인증코드",
+            color = Color.White.copy(alpha = 0.72f),
+            style = MaterialTheme.typography.labelMedium
+        )
+
+        if (isServerRunning && authCode != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = authCode,
+                    modifier = Modifier.weight(1f),
+                    color = Color(0xFFF2F1FF),
+                    style = MaterialTheme.typography.headlineLarge,
+                    letterSpacing = 4.sp
+                )
+                TextButton(onClick = onCopyAuthCodeClick) {
+                    Text("복사")
+                }
+            }
+        } else {
+            Text(
+                text = "서버 시작 후 인증코드가 표시됩니다.",
+                color = Color.White.copy(alpha = 0.65f),
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+
+        Text(
+            text = "PC 브라우저에서 위 주소로 접속한 뒤 인증코드를 입력하세요.",
             color = Color.White.copy(alpha = 0.65f),
             style = MaterialTheme.typography.bodySmall
         )
@@ -487,8 +646,8 @@ private fun PcAccessInfoCard(
 @Composable
 private fun FileRow(
     file: SharedFileUi,
-    actionText: String,
-    onActionClick: () -> Unit
+    actionText: String? = null,
+    onActionClick: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier
@@ -506,14 +665,22 @@ private fun FileRow(
             )
 
             Text(
-                text = file.sizeBytes.toFileSizeText(),
+                text = buildString {
+                    append(file.sizeBytes.toFileSizeText())
+                    file.lastModified?.let { modifiedAt ->
+                        append(" · ")
+                        append(modifiedAt.toModifiedTimeText())
+                    }
+                },
                 color = Color.White.copy(alpha = 0.55f),
                 style = MaterialTheme.typography.bodySmall
             )
         }
 
-        TextButton(onClick = onActionClick) {
-            Text(actionText)
+        if (actionText != null && onActionClick != null) {
+            TextButton(onClick = onActionClick) {
+                Text(actionText)
+            }
         }
     }
 }
@@ -563,6 +730,244 @@ private fun Uri.toSharedFileUi(
         uriString = this.toString()
     )
 }
+
+private fun Context.loadSharedFiles(): List<SharedFileUi> {
+    val directory = LocalFileServer.sharedDirectory(applicationContext.filesDir)
+    Log.d(FILE_SHARE_LOG_TAG, "app refresh directory: ${directory.absolutePath}")
+    if (!directory.exists()) {
+        Log.d(FILE_SHARE_LOG_TAG, "app refresh files found: count=0")
+        return emptyList()
+    }
+    if (!directory.isDirectory) {
+        throw IOException("공유 저장 경로가 폴더가 아닙니다.")
+    }
+
+    val files = directory.listFiles()
+        ?.asSequence()
+        ?.filter { it.isFile }
+        ?.sortedByDescending { it.lastModified() }
+        ?.map { file ->
+            SharedFileUi(
+                id = file.absolutePath,
+                name = file.name,
+                sizeBytes = file.length(),
+                mimeType = null,
+                uriString = null,
+                lastModified = file.lastModified()
+            )
+        }
+        ?.toList()
+        ?: throw IOException("파일 목록을 읽지 못했습니다.")
+
+    Log.d(FILE_SHARE_LOG_TAG, "app refresh files found: count=${files.size}")
+    return files
+}
+
+private fun Context.stageFilesForPc(files: List<SharedFileUi>): Int {
+    if (files.isEmpty()) {
+        throw IOException("공유할 파일을 먼저 선택해주세요.")
+    }
+
+    val directory = LocalFileServer.sharedDirectory(applicationContext.filesDir)
+    if (!directory.exists() && !directory.mkdirs() && !directory.isDirectory) {
+        throw IOException("공유 저장 폴더를 만들지 못했습니다.")
+    }
+    if (!directory.isDirectory) {
+        throw IOException("공유 저장 경로가 폴더가 아닙니다.")
+    }
+
+    files.forEach { file ->
+        val uri = file.uriString?.let(Uri::parse)
+            ?: throw IOException("${file.name}: 파일 위치를 확인할 수 없습니다.")
+        val safeName = sanitizeSharedFileName(file.name)
+            ?: throw IOException("${file.name}: 파일명이 올바르지 않습니다.")
+        val destination = resolveUniqueSharedFile(directory, safeName)
+
+        try {
+            val input = contentResolver.openInputStream(uri)
+                ?: throw IOException("${file.name}: 파일을 열 수 없습니다.")
+            input.use { source ->
+                destination.outputStream().buffered().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var totalBytes = 0L
+                    while (true) {
+                        val read = source.read(buffer)
+                        if (read < 0) break
+                        totalBytes += read
+                        if (totalBytes > MAX_SHARED_FILE_SIZE_BYTES) {
+                            throw IOException("${file.name}: 파일 크기 제한(50MB)을 초과했습니다.")
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                }
+            }
+            if (!destination.isFile) {
+                throw IOException("${file.name}: 파일 저장 실패")
+            }
+        } catch (error: IOException) {
+            destination.delete()
+            throw error
+        }
+    }
+
+    return files.size
+}
+
+private fun sanitizeSharedFileName(rawName: String): String? {
+    val leafName = rawName.replace('\\', '/').substringAfterLast('/')
+    return Normalizer.normalize(leafName, Normalizer.Form.NFC)
+        .replace(Regex("[\\u0000-\\u001F\\u007F]"), "")
+        .replace(Regex("""[/:*?"<>|]"""), "_")
+        .trim()
+        .trim('.')
+        .take(60)
+        .ifBlank { null }
+}
+
+private fun resolveUniqueSharedFile(directory: File, fileName: String): File {
+    val initial = File(directory, fileName)
+    if (!initial.exists()) return initial
+
+    val dotIndex = fileName.lastIndexOf('.')
+    val extension = if (dotIndex > 0) fileName.substring(dotIndex) else ""
+    val baseName = if (dotIndex > 0) fileName.substring(0, dotIndex) else fileName
+    var suffix = 1
+    while (true) {
+        val candidate = File(directory, "$baseName ($suffix)$extension")
+        if (!candidate.exists()) return candidate
+        suffix += 1
+    }
+}
+
+private suspend fun Context.saveSharedFileToDownloads(
+    fileName: String
+): FileActionResult = withContext(Dispatchers.IO) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+        return@withContext FileActionResult(
+            false,
+            "Android 10 미만에서는 공용 Downloads 저장을 지원하지 않습니다."
+        )
+    }
+
+    var insertedUri: Uri? = null
+    try {
+        val source = requireReadableSharedFile(fileName)
+        val targetName = resolveUniqueDownloadName(source.name)
+        Log.d(FILE_SHARE_LOG_TAG, "MediaStore save target: name=$targetName")
+        val collection = MediaStore.Downloads.getContentUri(
+            MediaStore.VOLUME_EXTERNAL_PRIMARY
+        )
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, targetName)
+            put(MediaStore.MediaColumns.MIME_TYPE, source.name.toMimeType())
+            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        insertedUri = contentResolver.insert(collection, values)
+            ?: throw IOException("MediaStore 항목을 만들지 못했습니다.")
+
+        val copiedBytes = contentResolver.openOutputStream(insertedUri, "w")?.use { output ->
+            source.inputStream().buffered().use { input -> input.copyTo(output) }
+        } ?: throw IOException("Downloads 출력 스트림을 열지 못했습니다.")
+        if (copiedBytes != source.length()) {
+            throw IOException("복사된 파일 크기가 원본과 다릅니다.")
+        }
+
+        val completed = ContentValues().apply {
+            put(MediaStore.MediaColumns.IS_PENDING, 0)
+        }
+        if (contentResolver.update(insertedUri, completed, null, null) <= 0) {
+            throw IOException("MediaStore 저장을 완료하지 못했습니다.")
+        }
+        Log.d(
+            FILE_SHARE_LOG_TAG,
+            "MediaStore save succeeded: uri=$insertedUri, " +
+                "name=$targetName, size=$copiedBytes"
+        )
+        FileActionResult(true, "Downloads 폴더에 $targetName 파일이 저장되었습니다.")
+    } catch (error: SharedFileAccessException) {
+        insertedUri?.let { contentResolver.delete(it, null, null) }
+        Log.d(FILE_SHARE_LOG_TAG, "MediaStore save failed: ${error.message}")
+        FileActionResult(false, error.message ?: "파일 저장 실패")
+    } catch (error: SecurityException) {
+        insertedUri?.let { contentResolver.delete(it, null, null) }
+        Log.d(FILE_SHARE_LOG_TAG, "MediaStore permission failed: ${error.message}")
+        FileActionResult(false, "권한 또는 저장소 오류로 파일을 저장하지 못했습니다.")
+    } catch (error: Exception) {
+        insertedUri?.let { contentResolver.delete(it, null, null) }
+        Log.d(FILE_SHARE_LOG_TAG, "MediaStore save failed: ${error.message}")
+        FileActionResult(false, "파일 저장 실패: ${error.message ?: "저장소 오류"}")
+    }
+}
+
+private fun Context.requireReadableSharedFile(fileName: String): File {
+    val directory = LocalFileServer.sharedDirectory(applicationContext.filesDir)
+    val source = File(directory, fileName)
+    Log.d(
+        FILE_SHARE_LOG_TAG,
+        "source file: path=${source.absolutePath}, exists=${source.exists()}, " +
+            "length=${source.length()}, canRead=${source.canRead()}"
+    )
+    val validParent = runCatching {
+        source.canonicalFile.parentFile == directory.canonicalFile
+    }.getOrDefault(false)
+    if (!validParent || !source.exists() || !source.isFile) {
+        throw SharedFileAccessException("파일을 찾을 수 없습니다.")
+    }
+    if (!source.canRead()) {
+        throw SharedFileAccessException("파일을 읽을 수 없습니다.")
+    }
+    return source
+}
+
+private fun Context.resolveUniqueDownloadName(requestedName: String): String {
+    val existingNames = mutableSetOf<String>()
+    val collection = MediaStore.Downloads.getContentUri(
+        MediaStore.VOLUME_EXTERNAL_PRIMARY
+    )
+    contentResolver.query(
+        collection,
+        arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+        "${MediaStore.MediaColumns.RELATIVE_PATH}=?",
+        arrayOf("${Environment.DIRECTORY_DOWNLOADS}/"),
+        null
+    )?.use { cursor ->
+        val index = cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME)
+        while (cursor.moveToNext()) {
+            if (index >= 0) cursor.getString(index)?.let(existingNames::add)
+        }
+    }
+    if (requestedName !in existingNames) return requestedName
+
+    val dot = requestedName.lastIndexOf('.')
+    val extension = if (dot > 0) requestedName.substring(dot) else ""
+    val base = if (dot > 0) requestedName.substring(0, dot) else requestedName
+    var suffix = 1
+    while ("$base ($suffix)$extension" in existingNames) suffix += 1
+    return "$base ($suffix)$extension"
+}
+
+private fun String.toMimeType(): String {
+    val extension = substringAfterLast('.', "").lowercase()
+    return android.webkit.MimeTypeMap.getSingleton()
+        .getMimeTypeFromExtension(extension)
+        ?: if (extension in setOf("txt", "log", "md")) "text/plain"
+        else "application/octet-stream"
+}
+
+private data class FileActionResult(
+    val isSuccess: Boolean,
+    val message: String
+)
+
+private class SharedFileAccessException(message: String) : FileNotFoundException(message)
+
+private fun Long.toModifiedTimeText(): String =
+    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+        .format(Date(this))
+
+private const val FILE_SHARE_LOG_TAG = "FileShare"
+private const val MAX_SHARED_FILE_SIZE_BYTES = 50L * 1024 * 1024
 
 fun Long.toFileSizeText(): String {
     return when {
