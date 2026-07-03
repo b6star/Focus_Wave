@@ -1,8 +1,13 @@
-package com.yourssu.focuswave.server
+﻿package com.yourssu.focuswave.server
 
+import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
+import java.io.FileInputStream
 import java.io.IOException
+import java.net.URLConnection
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.text.Normalizer
@@ -15,7 +20,7 @@ class LocalFileServer(
     private val authCode: String,
     private val homePage: String? = null,
     private val secureRandom: SecureRandom = SecureRandom(),
-    private val onFileUploaded: () -> Unit = {}
+    private val onFilesChanged: (() -> Unit)? = null
 ) : NanoHTTPD(port) {
     private val fileSaveLock = Any()
     private val activeTokens = ConcurrentHashMap.newKeySet<String>()
@@ -52,9 +57,15 @@ class LocalFileServer(
                 else -> methodNotAllowedResponse()
             }
 
-            session.uri.startsWith("/download/") -> when {
+            session.uri.startsWith(DOWNLOAD_ROUTE_PREFIX) -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
-                session.method == Method.GET -> handleDownload(session.uri)
+                session.method == Method.GET -> handleDownload(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            session.uri.startsWith(PREVIEW_ROUTE_PREFIX) -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.GET -> handlePreview(session)
                 else -> methodNotAllowedResponse()
             }
 
@@ -101,6 +112,7 @@ class LocalFileServer(
 
         val token = generateToken()
         activeTokens.add(token)
+        logDebug("authentication succeeded")
         return jsonResponse(
             Response.Status.OK,
             """{"success":true,"token":${jsonString(token)}}"""
@@ -146,6 +158,7 @@ class LocalFileServer(
 
     private fun unauthorizedResponse(message: String = "Authentication required"): Response =
         jsonError(Response.Status.UNAUTHORIZED, message).apply {
+            logDebug("authentication failed: $message")
             addHeader("WWW-Authenticate", "Bearer")
         }
 
@@ -155,7 +168,70 @@ class LocalFileServer(
         "Method not allowed"
     )
 
+    private fun handleList(): Response = try {
+        val files = listSharedFiles()
+        logDebug("file list requested: count=${files.size}")
+        jsonResponse(
+            Response.Status.OK,
+            files.joinToString(prefix = "[", postfix = "]") { file -> jsonString(file.name) }
+        )
+    } catch (error: IOException) {
+        logDebug("file list failed: ${error.message}")
+        jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file list")
+    }
+
+    private fun handleDownload(session: IHTTPSession): Response =
+        handleFileResponse(session, DOWNLOAD_ROUTE_PREFIX, "attachment", "download")
+
+    private fun handlePreview(session: IHTTPSession): Response =
+        handleFileResponse(session, PREVIEW_ROUTE_PREFIX, "inline", "preview")
+
+    private fun handleFileResponse(
+        session: IHTTPSession,
+        routePrefix: String,
+        disposition: String,
+        action: String
+    ): Response {
+        val requestedName = session.uri.removePrefix(routePrefix)
+        val safeName = sanitizeFileName(requestedName)
+        if (safeName == null || safeName != requestedName) {
+            return jsonError(Response.Status.BAD_REQUEST, "Invalid file name")
+        }
+
+        val directory = sharedDirectory(appFilesDirectory)
+        val file = File(directory, safeName)
+        return try {
+            if (
+                file.canonicalFile.parentFile != directory.canonicalFile ||
+                !file.isFile
+            ) {
+                return jsonError(Response.Status.NOT_FOUND, "File not found")
+            }
+
+            logDebug("$action requested: name=${file.name}")
+            val mimeType = URLConnection.guessContentTypeFromName(file.name)
+                ?: "application/octet-stream"
+            val encodedName = URLEncoder.encode(file.name, StandardCharsets.UTF_8.name())
+                .replace("+", "%20")
+            newFixedLengthResponse(
+                Response.Status.OK,
+                mimeType,
+                FileInputStream(file),
+                file.length()
+            ).apply {
+                addHeader(
+                    "Content-Disposition",
+                    "$disposition; filename*=UTF-8''$encodedName"
+                )
+            }
+        } catch (error: IOException) {
+            logDebug("$action failed: name=$safeName, reason=${error.message}")
+            jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file")
+        }
+    }
+
     private fun handleUpload(session: IHTTPSession): Response {
+        logDebug("upload request received")
         val contentType = session.headers["content-type"].orEmpty()
         val mediaType = contentType.substringBefore(';').trim()
         if (!mediaType.equals("multipart/form-data", ignoreCase = true)) {
@@ -164,13 +240,9 @@ class LocalFileServer(
 
         val contentLength = session.headers["content-length"]?.toLongOrNull()
 
-        /**
-         * 파일 크기 제한
         if (contentLength != null && contentLength > MAX_REQUEST_SIZE_BYTES) {
             return uploadError(Response.Status.PAYLOAD_TOO_LARGE, "File is too large")
         }
-
-         */
 
         val uploadedParts = mutableMapOf<String, String>()
         try {
@@ -200,22 +272,24 @@ class LocalFileServer(
             return uploadError(Response.Status.BAD_REQUEST, "Uploaded file is invalid")
         }
 
-        /**
-         * 
-        파일 크기 제한
         if (temporaryFile.length() > MAX_FILE_SIZE_BYTES) {
             return uploadError(Response.Status.PAYLOAD_TOO_LARGE, "File is too large")
         }
-         */
 
+        logDebug("upload received: name=$safeFileName, size=${temporaryFile.length()}")
         return try {
             val storedFile = saveUploadedFile(temporaryFile, safeFileName)
-            onFileUploaded()
+            logDebug(
+                "upload saved: path=${storedFile.absolutePath}, " +
+                    "exists=${storedFile.exists()}, size=${storedFile.length()}"
+            )
+            notifyFilesChanged()
             jsonResponse(
                 Response.Status.OK,
                 """{"success":true,"fileName":${jsonString(storedFile.name)},"size":${storedFile.length()}}"""
             )
         } catch (error: IOException) {
+            logDebug("upload save failed: reason=${error.message}")
             uploadError(
                 Response.Status.INTERNAL_ERROR,
                 "Failed to save file"
@@ -223,62 +297,22 @@ class LocalFileServer(
         }
     }
 
-    private fun handleList(): Response {
-        return try {
-            val directory = getOrCreateSharedDirectory()
-
-            val filesJson = directory
-                .listFiles()
-                ?.filter { it.isFile }
-                ?.joinToString(
-                    prefix = "[",
-                    postfix = "]"
-                ) { file ->
-                    jsonString(file.name)
-                } ?: "[]"
-
-            jsonResponse(Response.Status.OK, filesJson)
-        } catch (error: IOException) {
-            jsonError(Response.Status.INTERNAL_ERROR, "Failed to list files")
+    internal fun listSharedFiles(): List<File> {
+        val directory = sharedDirectory(appFilesDirectory)
+        if (!directory.exists()) return emptyList()
+        if (!directory.isDirectory) {
+            throw IOException("Shared storage path is not a directory")
         }
+        return directory.listFiles()
+            ?.asSequence()
+            ?.filter { it.isFile }
+            ?.sortedBy { it.name.lowercase() }
+            ?.toList()
+            ?: throw IOException("Failed to read shared storage directory")
     }
 
-    private fun handleDownload(uri: String): Response {
-        return try {
-            val encodedFileName = uri.removePrefix("/download/")
-            val decodedFileName = java.net.URLDecoder.decode(encodedFileName, "UTF-8")
-
-            val safeFileName = sanitizeFileName(decodedFileName)
-                ?: return jsonError(Response.Status.BAD_REQUEST, "Invalid file name")
-
-            val directory = getOrCreateSharedDirectory()
-            val file = File(directory, safeFileName)
-
-            if (!file.exists() || !file.isFile) {
-                return jsonError(Response.Status.NOT_FOUND, "File not found")
-            }
-
-            if (file.canonicalFile.parentFile != directory.canonicalFile) {
-                return jsonError(Response.Status.BAD_REQUEST, "Invalid file path")
-            }
-
-            newFixedLengthResponse(
-                Response.Status.OK,
-                "application/octet-stream",
-                file.inputStream(),
-                file.length()
-            ).apply {
-                addHeader(
-                    "Content-Disposition",
-                    "attachment; filename=\"${file.name}\""
-                )
-            }
-        } catch (error: Exception) {
-            jsonError(Response.Status.INTERNAL_ERROR, "Failed to download file")
-        }
-    }
     private fun getOrCreateSharedDirectory(): File {
-        val directory = File(appFilesDirectory, SHARED_DIRECTORY_NAME)
+        val directory = sharedDirectory(appFilesDirectory)
         if (directory.exists()) {
             if (!directory.isDirectory) {
                 throw IOException("Shared storage path is not a directory")
@@ -289,17 +323,6 @@ class LocalFileServer(
         return directory
     }
 
-    private fun getOrCreateUploadDirectory(): File {
-        val directory = File(appFilesDirectory, UPLOAD_DIRECTORY_NAME)
-        if (directory.exists()) {
-            if (!directory.isDirectory) {
-                throw IOException("Upload storage path is not a directory")
-            }
-        } else if (!directory.mkdirs() && !directory.isDirectory) {
-            throw IOException("Failed to create upload storage directory")
-        }
-        return directory
-    }
     private fun sanitizeFileName(rawFileName: String): String? {
         val leafName = rawFileName
             .replace('\\', '/')
@@ -362,7 +385,7 @@ class LocalFileServer(
 
     private fun saveUploadedFile(temporaryFile: File, safeFileName: String): File =
         synchronized(fileSaveLock) {
-            val directory = getOrCreateUploadDirectory()
+            val directory = getOrCreateSharedDirectory()
             val destination = resolveUniqueFile(directory, safeFileName)
 
             if (destination.canonicalFile.parentFile != directory.canonicalFile) {
@@ -376,12 +399,9 @@ class LocalFileServer(
                         output.flush()
                     }
                 }
-
-                if (destination.length() != temporaryFile.length()) {
-                    destination.delete()
-                    throw IOException("File copy incomplete")
+                if (!destination.isFile || destination.length() != temporaryFile.length()) {
+                    throw IOException("Stored file verification failed")
                 }
-
                 destination
             } catch (error: IOException) {
                 destination.delete()
@@ -389,8 +409,10 @@ class LocalFileServer(
             }
         }
 
-    private fun uploadError(status: Response.Status, message: String): Response =
-        jsonError(status, message)
+    private fun uploadError(status: Response.Status, message: String): Response {
+        logDebug("upload failed: $message")
+        return jsonError(status, message)
+    }
 
     private fun jsonError(status: Response.Status, message: String): Response =
         jsonResponse(status, """{"success":false,"message":${jsonString(message)}}""")
@@ -426,16 +448,33 @@ class LocalFileServer(
         append('"')
     }
 
+    private fun notifyFilesChanged() {
+        try {
+            onFilesChanged?.invoke()
+        } catch (error: RuntimeException) {
+            logDebug("file change notification failed: ${error.message}")
+        }
+    }
+
+    private fun logDebug(message: String) {
+        try {
+            Log.d(LOG_TAG, message)
+        } catch (_: RuntimeException) {
+            // android.util.Log is unavailable in local JVM tests.
+        }
+    }
+
     companion object {
         const val PORT = 8080
 
+        private const val LOG_TAG = "FileShare"
+        private const val DOWNLOAD_ROUTE_PREFIX = "/download/"
+        private const val PREVIEW_ROUTE_PREFIX = "/preview/"
         private val UPLOAD_FIELD_NAMES = listOf("file", "files")
+        internal const val SHARED_DIRECTORY_NAME = "shared_files"
 
-        //pc -> phone
-        private const val UPLOAD_DIRECTORY_NAME = "uploaded_files"
-
-        //phone -> pc
-        private const val SHARED_DIRECTORY_NAME = "shared_files"
+        internal fun sharedDirectory(appFilesDirectory: File): File =
+            File(appFilesDirectory, SHARED_DIRECTORY_NAME)
         private const val MAX_FILE_SIZE_BYTES = 50L * 1024 * 1024
         private const val MAX_MULTIPART_OVERHEAD_BYTES = 1024L * 1024
         private const val MAX_REQUEST_SIZE_BYTES = MAX_FILE_SIZE_BYTES + MAX_MULTIPART_OVERHEAD_BYTES
@@ -495,4 +534,3 @@ class LocalFileServer(
         """.trimIndent()
     }
 }
-

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -76,6 +76,8 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
         }
 
         a {
@@ -92,6 +94,38 @@
             align-items: center;
             gap: 10px;
             cursor: pointer;
+            flex: 1 1 180px;
+            min-width: 0;
+        }
+
+        .checkbox-label input {
+            flex: 0 0 auto;
+        }
+
+        .file-name {
+            flex: 1;
+            min-width: 0;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .file-download {
+            white-space: nowrap;
+            min-width: fit-content;
+            flex-shrink: 0;
+            writing-mode: horizontal-tb;
+            word-break: normal;
+        }
+
+        @media (max-width: 480px) {
+            #fileList li {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .file-download {
+                align-self: flex-end;
+            }
         }
 
         .action-bar {
@@ -190,7 +224,10 @@
         try {
             const response = await fetch('/auth', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify({ code: code })
             });
 
@@ -229,13 +266,13 @@
 
         const fileInput = document.getElementById('fileInput');
         const statusText = document.getElementById('uploadStatus');
+        const files = Array.from(fileInput.files);
 
-        if (fileInput.files.length === 0) {
+        if (files.length === 0) {
             alert("파일을 먼저 선택해주세요!");
             return;
         }
 
-        const files = Array.from(fileInput.files);
         let successCount = 0;
 
         for (let i = 0; i < files.length; i++) {
@@ -276,6 +313,8 @@
                 true
             );
 
+            xhr.withCredentials = true;
+
             xhr.upload.onprogress = function(event) {
                 if (event.lengthComputable) {
                     const percent = Math.round((event.loaded / event.total) * 100);
@@ -309,6 +348,19 @@
 
             xhr.send(formData);
         });
+    }
+
+    function uploadFailureMessage(serverMessage) {
+        if (serverMessage === "Failed to save file") {
+            return "파일 저장 실패";
+        }
+        if (serverMessage === "File is too large") {
+            return "파일 크기 제한(50MB)을 초과했습니다.";
+        }
+        if (serverMessage === "File field is required") {
+            return "업로드 파일 데이터가 없습니다.";
+        }
+        return serverMessage || "서버 오류";
     }
 
     function toggleSelectAll() {
@@ -354,7 +406,9 @@
         const selectAllCheckbox = document.getElementById('selectAll');
 
         try {
-            const response = await fetch('/list');
+            const response = await fetch('/list', {
+                credentials: 'same-origin'
+            });
 
             if (response.ok) {
                 const files = await response.json();
@@ -380,13 +434,18 @@
                     checkbox.className = "file-checkbox";
                     checkbox.value = fileName;
 
+                    const fileNameText = document.createElement('span');
+                    fileNameText.className = "file-name";
+                    fileNameText.textContent = fileName;
+
                     label.appendChild(checkbox);
-                    label.appendChild(document.createTextNode(" " + fileName));
+                    label.appendChild(fileNameText);
 
                     const downloadBtn = document.createElement('a');
                     downloadBtn.href = `/download/${encodeURIComponent(fileName)}`;
                     downloadBtn.textContent = "다운로드 ⬇️";
                     downloadBtn.download = fileName;
+                    downloadBtn.className = "file-download";
 
                     li.appendChild(label);
                     li.appendChild(downloadBtn);
