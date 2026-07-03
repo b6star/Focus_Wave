@@ -76,6 +76,8 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
         }
 
         a {
@@ -92,6 +94,38 @@
             align-items: center;
             gap: 10px;
             cursor: pointer;
+            flex: 1 1 180px;
+            min-width: 0;
+        }
+
+        .checkbox-label input {
+            flex: 0 0 auto;
+        }
+
+        .file-name {
+            flex: 1;
+            min-width: 0;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .file-download {
+            white-space: nowrap;
+            min-width: fit-content;
+            flex-shrink: 0;
+            writing-mode: horizontal-tb;
+            word-break: normal;
+        }
+
+        @media (max-width: 480px) {
+            #fileList li {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .file-download {
+                align-self: flex-end;
+            }
         }
 
         .action-bar {
@@ -152,10 +186,6 @@
         <h2>📱 폰 ➡️ 💻 PC</h2>
         <p>현재 폰에서 공유 중인 파일 목록입니다.</p>
 
-        <button onclick="fetchFileList()" style="background-color: #8A86E6;">
-            🔄 목록 새로고침
-        </button>
-
         <div class="action-bar">
             <label class="checkbox-label">
                 <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> 전체 선택
@@ -174,6 +204,7 @@
 
 <script>
     let isAuthenticated = false;
+    let fileListRefreshTimer = null;
 
     async function verifyCode() {
         const codeInput = document.getElementById('authCodeInput');
@@ -202,9 +233,20 @@
 
             if (response.ok) {
                 isAuthenticated = true;
+                clearFileShareUi();
                 authCard.style.display = "none";
                 fileShareContainer.style.display = "flex";
+
                 fetchFileList();
+
+                if (fileListRefreshTimer !== null) {
+                    clearInterval(fileListRefreshTimer);
+                }
+
+                fileListRefreshTimer = setInterval(() => {
+                    fetchFileList();
+                }, 2000);
+
             } else if (response.status === 401 || response.status === 403) {
                 authStatus.innerText = "인증 코드가 올바르지 않습니다.";
             } else {
@@ -231,45 +273,81 @@
             return;
         }
 
-        let uploadedCount = 0;
-        statusText.innerText = `업로드 중... (0/${files.length})`;
+        let successCount = 0;
 
-        try {
-            for (const file of files) {
-                const formData = new FormData();
-                formData.append("file", file);
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
 
-                const response = await fetch('/upload', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    body: formData
-                });
-                const result = await response.json().catch(() => null);
+            statusText.innerText = `전송 준비 중... (${i + 1}/${files.length}) ${file.name}`;
 
-                if (response.status === 401 || response.status === 403) {
-                    statusText.innerText = "인증 만료: 다시 인증해주세요.";
-                    resetAuth();
-                    return;
-                }
-                if (!response.ok) {
-                    const reason = uploadFailureMessage(result?.message);
-                    throw new Error(reason);
-                }
+            const success = await uploadOneFile(
+                file,
+                i + 1,
+                files.length,
+                statusText
+            );
 
-                uploadedCount += 1;
-                statusText.innerText =
-                    `업로드 중... (${uploadedCount}/${files.length})`;
+            if (!success) {
+                return;
             }
 
-            statusText.innerText = `${uploadedCount}개 파일 업로드 성공!`;
-            fileInput.value = "";
-            await fetchFileList();
-        } catch (error) {
-            const reason = error instanceof Error ? error.message : "알 수 없는 오류";
-            statusText.innerText = `업로드 실패: ${reason}`;
-            await fetchFileList();
-            console.error(error);
+            successCount++;
         }
+
+        statusText.innerText = `${successCount}개 파일 전송 성공!`;
+        fileInput.value = "";
+        fetchFileList();
+    }
+
+    function uploadOneFile(file, currentIndex, totalCount, statusText) {
+        return new Promise((resolve) => {
+            const formData = new FormData();
+
+            formData.append("files", file);
+            formData.append("fileName_0", file.name);
+
+            const xhr = new XMLHttpRequest();
+            xhr.open(
+                "POST",
+                `/upload?fileName=${encodeURIComponent(file.name)}`,
+                true
+            );
+
+            xhr.withCredentials = true;
+
+            xhr.upload.onprogress = function(event) {
+                if (event.lengthComputable) {
+                    const percent = Math.round((event.loaded / event.total) * 100);
+                    statusText.innerText =
+                        `전송 중... (${currentIndex}/${totalCount}) ${file.name} - ${percent}%`;
+                } else {
+                    statusText.innerText =
+                        `전송 중... (${currentIndex}/${totalCount}) ${file.name}`;
+                }
+            };
+
+            xhr.onload = function() {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    statusText.innerText =
+                        `전송 완료... (${currentIndex}/${totalCount}) ${file.name}`;
+                    resolve(true);
+                } else if (xhr.status === 401 || xhr.status === 403) {
+                    statusText.innerText = "인증이 만료되었거나 권한이 없습니다.";
+                    resetAuth();
+                    resolve(false);
+                } else {
+                    statusText.innerText = `전송 실패: 서버 에러 (${xhr.status}) - ${file.name}`;
+                    resolve(false);
+                }
+            };
+
+            xhr.onerror = function() {
+                statusText.innerText = `서버에 연결할 수 없습니다. - ${file.name}`;
+                resolve(false);
+            };
+
+            xhr.send(formData);
+        });
     }
 
     function uploadFailureMessage(serverMessage) {
@@ -327,12 +405,6 @@
         const listElement = document.getElementById('fileList');
         const selectAllCheckbox = document.getElementById('selectAll');
 
-        listElement.innerHTML = "<li>로딩 중...</li>";
-
-        if (selectAllCheckbox) {
-            selectAllCheckbox.checked = false;
-        }
-
         try {
             const response = await fetch('/list', {
                 credentials: 'same-origin'
@@ -342,12 +414,16 @@
                 const files = await response.json();
                 listElement.innerHTML = "";
 
+                if (selectAllCheckbox) {
+                    selectAllCheckbox.checked = false;
+                }
+
                 if (files.length === 0) {
                     listElement.innerHTML = "<li>폰에 공유 중인 파일이 없습니다.</li>";
                     return;
                 }
 
-                files.forEach(fileName => {
+                files.slice().reverse().forEach(fileName => {
                     const li = document.createElement('li');
 
                     const label = document.createElement('label');
@@ -358,13 +434,18 @@
                     checkbox.className = "file-checkbox";
                     checkbox.value = fileName;
 
+                    const fileNameText = document.createElement('span');
+                    fileNameText.className = "file-name";
+                    fileNameText.textContent = fileName;
+
                     label.appendChild(checkbox);
-                    label.appendChild(document.createTextNode(" " + fileName));
+                    label.appendChild(fileNameText);
 
                     const downloadBtn = document.createElement('a');
                     downloadBtn.href = `/download/${encodeURIComponent(fileName)}`;
                     downloadBtn.textContent = "다운로드 ⬇️";
                     downloadBtn.download = fileName;
+                    downloadBtn.className = "file-download";
 
                     li.appendChild(label);
                     li.appendChild(downloadBtn);
@@ -411,11 +492,33 @@
     function resetAuth() {
         isAuthenticated = false;
 
+        if (fileListRefreshTimer !== null) {
+            clearInterval(fileListRefreshTimer);
+            fileListRefreshTimer = null;
+        }
+        clearFileShareUi();
+
         document.getElementById('authCard').style.display = "block";
         document.getElementById('fileShareContainer').style.display = "none";
         document.getElementById('authCodeInput').value = "";
         document.getElementById('authStatus').innerText = "다시 인증해주세요.";
     }
+
+    function clearFileShareUi() {
+        const fileInput = document.getElementById('fileInput');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const fileList = document.getElementById('fileList');
+        const selectAllCheckbox = document.getElementById('selectAll');
+
+        if (fileInput) fileInput.value = "";
+        if (uploadStatus) uploadStatus.innerText = "";
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+
+        if (fileList) {
+            fileList.innerHTML = "<li>아직 불러온 파일이 없습니다.</li>";
+        }
+    }
+
 
     document.getElementById('authCodeInput').addEventListener('keyup', function(event) {
         if (event.key === "Enter") {

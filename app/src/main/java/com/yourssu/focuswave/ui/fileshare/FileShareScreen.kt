@@ -7,6 +7,16 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.graphics.BitmapFactory
+import android.widget.MediaController
+import android.widget.VideoView
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -30,9 +40,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.server.FileShareUiState
 import com.yourssu.focuswave.server.LocalFileServer
 import java.io.File
@@ -67,6 +80,7 @@ fun FileShareOverlay(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val fileServerManager: FileServerManager = viewModel()
 
     var receivedFiles by remember {
         mutableStateOf<List<SharedFileUi>>(emptyList())
@@ -93,6 +107,10 @@ fun FileShareOverlay(
                 id = index.toString()
             )
         }
+    }
+
+    var sendProgressMap by remember {
+        mutableStateOf<Map<String, Int>>(emptyMap())
     }
 
     val clipboardManager = LocalClipboardManager.current
@@ -163,6 +181,8 @@ fun FileShareOverlay(
         refreshSharedFiles(showMessage = false)
     }
 
+    var previewFile by remember { mutableStateOf<SharedFileUi?>(null) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -195,10 +215,14 @@ fun FileShareOverlay(
             ConnectionStatusCard(
                 uiState = uiState,
                 onStartClick = onStartClick,
-                onStopClick = onStopClick
+                onStopClick = {
+                    onStopClick()
+                    selectedFiles = emptyList()
+                }
             )
 
             PcAccessInfoCard(
+                uiState = uiState,
                 pcAccessUrl = pcAccessUrl,
                 isServerRunning = uiState.isRunning,
                 authCode = uiState.authCode,
@@ -209,7 +233,9 @@ fun FileShareOverlay(
                     uiState.authCode?.let { authCode ->
                         clipboardManager.setText(AnnotatedString(authCode))
                     }
-                }
+                },
+                onRefreshClick = fileServerManager::regenerateAuthCode
+
             )
 
             //File Sharing panel
@@ -282,25 +308,63 @@ fun FileShareOverlay(
                             },
                             onSaveClick = { file ->
                                 saveReceivedFileToDownloads(file)
-                            }
+                            },
+                            onPreviewClick = { file -> previewFile = file }
                         )
 
                         1 -> PhoneToPcSection(
                             selectedFiles = selectedFiles,
                             isServerRunning = uiState.isRunning,
+                            sendProgressMap = sendProgressMap,
                             onPickFileClick = {
                                 filePickerLauncher.launch(arrayOf("*/*"))
                             },
                             onRemoveFileClick = { targetFile ->
                                 selectedFiles = selectedFiles.filterNot { it.id == targetFile.id }
+                                sendProgressMap = sendProgressMap - targetFile.id
                             },
                             onSendClick = {
-                                stageSelectedFilesForPc()
+                                coroutineScope.launch {
+                                    fileErrorMessage = null
+                                    selectedFiles.forEach { file ->
+                                        sendProgressMap = sendProgressMap + (file.id to 0)
+                                    }
+                                    val filesToShare = selectedFiles
+                                    runCatching {
+                                        withContext(Dispatchers.IO) {
+                                            fileServerManager.shareFiles(
+                                                filesToShare
+                                            ) { fileId, percent ->
+                                                coroutineScope.launch {
+                                                    sendProgressMap =
+                                                        sendProgressMap + (fileId to percent)
+                                                }
+                                            }
+                                        }
+                                    }.onSuccess {
+                                        selectedFiles = emptyList()
+                                        fileMessage =
+                                            "${filesToShare.size}개 파일을 PC 다운로드 목록에 추가했습니다."
+                                    }.onFailure { error ->
+                                        fileErrorMessage =
+                                            error.localizedMessage ?: "파일 공유 준비에 실패했습니다."
+                                    }
+                                }
                             }
                         )
                     }
                 }
             }
+            previewFile?.let { file ->
+                FilePreviewDialog(
+                    file = file,
+                    onDismiss = { previewFile = null },
+                    onSaveClick = {
+                        saveReceivedFileToDownloads(file)
+                    }
+                )
+            }
+
         }
     }
 }
@@ -412,7 +476,8 @@ private fun ConnectionStatusCard(
 private fun PcToPhoneSection(
     receivedFiles: List<SharedFileUi>,
     onRefreshClick: () -> Unit,
-    onSaveClick: (SharedFileUi) -> Unit
+    onSaveClick: (SharedFileUi) -> Unit,
+    onPreviewClick: (SharedFileUi) -> Unit
 ) {
     SectionCard {
 
@@ -431,14 +496,10 @@ private fun PcToPhoneSection(
         Button(
             onClick = onRefreshClick,
             modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF8A86E6),
-                contentColor = Color.White
-            )
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8A86E6))
         ) {
             Text("받은 파일 새로고침")
         }
-
         if (receivedFiles.isEmpty()) {
             EmptyText("아직 PC에서 받은 파일이 없습니다.")
         } else {
@@ -449,8 +510,10 @@ private fun PcToPhoneSection(
                 items(receivedFiles) { file ->
                     FileRow(
                         file = file,
+                        showPreviewButton = file.isPreviewable(),
                         actionText = "Downloads에 저장",
-                        onActionClick = { onSaveClick(file) }
+                        onActionClick = { onSaveClick(file) },
+                        onPreviewClick = { onPreviewClick(file) }
                     )
                 }
             }
@@ -462,6 +525,7 @@ private fun PcToPhoneSection(
 private fun PhoneToPcSection(
     selectedFiles: List<SharedFileUi>,
     isServerRunning: Boolean,
+    sendProgressMap: Map<String, Int>,
     onPickFileClick: () -> Unit,
     onRemoveFileClick: (SharedFileUi) -> Unit,
     onSendClick: () -> Unit
@@ -494,8 +558,6 @@ private fun PhoneToPcSection(
         }
 
 
-
-
         Button(
             onClick = onPickFileClick,
             modifier = Modifier.fillMaxWidth(),
@@ -520,7 +582,9 @@ private fun PhoneToPcSection(
                     FileRow(
                         file = file,
                         actionText = "삭제",
-                        onActionClick = { onRemoveFileClick(file) }
+                        progress = sendProgressMap[file.id],
+                        onActionClick = { onRemoveFileClick(file) },
+                        onPreviewClick = {}
                     )
                 }
             }
@@ -562,12 +626,15 @@ private fun SectionCard(
 
 @Composable
 private fun PcAccessInfoCard(
+    uiState: FileShareUiState,
     pcAccessUrl: String,
     isServerRunning: Boolean,
     authCode: String?,
     onCopyUrlClick: () -> Unit,
-    onCopyAuthCodeClick: () -> Unit
+    onCopyAuthCodeClick: () -> Unit,
+    onRefreshClick: () -> Unit
 ) {
+    var isCodeVisible by remember { mutableStateOf(true) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -626,6 +693,9 @@ private fun PcAccessInfoCard(
                 TextButton(onClick = onCopyAuthCodeClick) {
                     Text("복사")
                 }
+                TextButton(onClick = onRefreshClick) {
+                    Text("재발급")
+                }
             }
         } else {
             Text(
@@ -646,24 +716,32 @@ private fun PcAccessInfoCard(
 @Composable
 private fun FileRow(
     file: SharedFileUi,
+    showPreviewButton: Boolean = false,
     actionText: String? = null,
-    onActionClick: (() -> Unit)? = null
+    progress: Int? = null,
+    onActionClick: (() -> Unit)? = null,
+    onPreviewClick: (() -> Unit)? = null
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.Black.copy(alpha = 0.24f), RoundedCornerShape(10.dp))
             .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = file.name,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        Text(
+            text = file.name,
+            color = Color.White,
+            modifier = Modifier.fillMaxWidth(),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = true
+        )
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text(
                 text = buildString {
                     append(file.sizeBytes.toFileSizeText())
@@ -673,14 +751,220 @@ private fun FileRow(
                     }
                 },
                 color = Color.White.copy(alpha = 0.55f),
-                style = MaterialTheme.typography.bodySmall
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                softWrap = false
+            )
+
+            progress?.let {
+                Text(
+                    text = if (it >= 100) "완료" else "$it%",
+                    color = Color(0xFFFFD700),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            }
+        }
+
+        if (
+            (showPreviewButton && onPreviewClick != null) ||
+            (actionText != null && onActionClick != null)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(
+                    8.dp,
+                    Alignment.End
+                ),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (showPreviewButton && onPreviewClick != null) {
+                    TextButton(onClick = onPreviewClick) {
+                        Text(
+                            text = "열기",
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+                if (actionText != null && onActionClick != null) {
+                    TextButton(onClick = onActionClick) {
+                        Text(
+                            text = actionText,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilePreviewDialog(
+    file: SharedFileUi,
+    onDismiss: () -> Unit,
+    onSaveClick: () -> Unit
+) {
+    val sourceFile = remember(file) {
+        file.uriString?.let { uriString ->
+            val uri = Uri.parse(uriString)
+            if (uri.scheme == "file") {
+                uri.path?.let { path -> File(path) }
+            } else {
+                null
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.96f)
+                .fillMaxHeight(0.92f)
+                .background(Color(0xFF2A2F45), RoundedCornerShape(18.dp))
+                .border(
+                    BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                    RoundedCornerShape(18.dp)
+                )
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = file.name,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onSaveClick) {
+                    Text("저장")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("닫기")
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(Color.Black.copy(alpha = 0.25f), RoundedCornerShape(12.dp))
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (sourceFile == null || !sourceFile.exists()) {
+                    Text(
+                        text = "파일을 찾을 수 없습니다.",
+                        color = Color.White.copy(alpha = 0.7f)
+                    )
+                } else {
+                    FilePreviewContent(
+                        file = sourceFile,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilePreviewContent(
+    file: File,
+    modifier: Modifier = Modifier
+) {
+    val extension = file.extension.lowercase()
+    when (extension) {
+        "jpg", "jpeg", "png", "webp" -> {
+            val bitmap = remember(file) {
+                BitmapFactory.decodeFile(file.absolutePath)
+            }
+
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = modifier,
+                    contentScale = ContentScale.Fit
+                )
+            } else {
+                Text("이미지를 불러올 수 없습니다.")
+            }
+        }
+        "mp4", "mkv", "webm" -> {
+            AndroidView(
+                modifier = modifier,
+                factory = { context ->
+                    VideoView(context).apply {
+                        setVideoURI(Uri.fromFile(file))
+                        setMediaController(MediaController(context))
+                        start()
+                    }
+                }
             )
         }
 
-        if (actionText != null && onActionClick != null) {
-            TextButton(onClick = onActionClick) {
-                Text(actionText)
+        "mp3", "wav", "m4a", "aac" -> {
+            AndroidView(
+                modifier = modifier,
+                factory = { context ->
+                    VideoView(context).apply {
+                        setVideoURI(Uri.fromFile(file))
+                        setMediaController(MediaController(context))
+                        start()
+                    }
+                }
+            )
+        }
+
+        "txt", "log", "csv", "json", "xml",
+        "kt", "java", "kts",
+        "c", "cpp", "cc", "h", "hpp",
+        "py",
+        "js", "ts",
+        "html", "css",
+        "md",
+        "gradle", "properties",
+        "yml", "yaml",
+        "sql",
+        "sh", "bat",
+        "go", "rs", "swift",
+        "php", "rb",
+        "ini", "conf"
+            -> {
+            val text = remember(file) {
+                runCatching {
+                    file.readText()
+                }.getOrElse {
+                    "텍스트 파일을 읽을 수 없습니다."
+                }
             }
+
+            SelectionContainer {
+                Text(
+                    text = text,
+                    color = Color.White.copy(alpha = 0.9f),
+                    modifier = modifier.verticalScroll(rememberScrollState())
+                )
+            }
+        }
+
+        else -> {
+            Text("이 파일 형식은 아직 앱 내부 미리보기를 지원하지 않습니다.")
         }
     }
 }
@@ -752,7 +1036,7 @@ private fun Context.loadSharedFiles(): List<SharedFileUi> {
                 name = file.name,
                 sizeBytes = file.length(),
                 mimeType = null,
-                uriString = null,
+                uriString = file.toURI().toString(),
                 lastModified = file.lastModified()
             )
         }
@@ -963,7 +1247,7 @@ private data class FileActionResult(
 private class SharedFileAccessException(message: String) : FileNotFoundException(message)
 
 private fun Long.toModifiedTimeText(): String =
-    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+    DateFormat.getDateInstance(DateFormat.SHORT)
         .format(Date(this))
 
 private const val FILE_SHARE_LOG_TAG = "FileShare"
@@ -975,4 +1259,54 @@ fun Long.toFileSizeText(): String {
         this >= 1024 -> "%.1f KB".format(this / 1024.0)
         else -> "$this B"
     }
+}
+
+
+private fun SharedFileUi.isPreviewable(): Boolean {
+    val lowerName = name.lowercase()
+
+    return lowerName.endsWith(".jpg") ||
+            lowerName.endsWith(".jpeg") ||
+            lowerName.endsWith(".png") ||
+            lowerName.endsWith(".webp") ||
+            lowerName.endsWith(".mp4") ||
+            lowerName.endsWith(".mkv") ||
+            lowerName.endsWith(".webm") ||
+            lowerName.endsWith(".mp3") ||
+            lowerName.endsWith(".wav") ||
+            lowerName.endsWith(".m4a") ||
+            lowerName.endsWith(".aac") ||
+            lowerName.endsWith(".txt") ||
+            lowerName.endsWith(".log") ||
+            lowerName.endsWith(".csv") ||
+            lowerName.endsWith(".json") ||
+            lowerName.endsWith(".xml") ||
+            lowerName.endsWith(".kt") ||
+            lowerName.endsWith(".java") ||
+            lowerName.endsWith(".kts") ||
+            lowerName.endsWith(".c") ||
+            lowerName.endsWith(".cpp") ||
+            lowerName.endsWith(".cc") ||
+            lowerName.endsWith(".h") ||
+            lowerName.endsWith(".hpp") ||
+            lowerName.endsWith(".py") ||
+            lowerName.endsWith(".js") ||
+            lowerName.endsWith(".ts") ||
+            lowerName.endsWith(".html") ||
+            lowerName.endsWith(".css") ||
+            lowerName.endsWith(".md") ||
+            lowerName.endsWith(".gradle") ||
+            lowerName.endsWith(".properties") ||
+            lowerName.endsWith(".yml") ||
+            lowerName.endsWith(".yaml") ||
+            lowerName.endsWith(".sql") ||
+            lowerName.endsWith(".sh") ||
+            lowerName.endsWith(".bat") ||
+            lowerName.endsWith(".go") ||
+            lowerName.endsWith(".rs") ||
+            lowerName.endsWith(".swift") ||
+            lowerName.endsWith(".php") ||
+            lowerName.endsWith(".rb") ||
+            lowerName.endsWith(".ini") ||
+            lowerName.endsWith(".conf")
 }

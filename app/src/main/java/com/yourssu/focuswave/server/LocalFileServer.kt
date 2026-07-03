@@ -63,6 +63,12 @@ class LocalFileServer(
                 else -> methodNotAllowedResponse()
             }
 
+            session.uri.startsWith(PREVIEW_ROUTE_PREFIX) -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.GET -> handlePreview(session)
+                else -> methodNotAllowedResponse()
+            }
+
             session.uri == "/auth" || session.uri == "/ping" || session.uri == "/" ->
                 methodNotAllowedResponse()
 
@@ -174,8 +180,19 @@ class LocalFileServer(
         jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file list")
     }
 
-    private fun handleDownload(session: IHTTPSession): Response {
-        val requestedName = session.uri.removePrefix(DOWNLOAD_ROUTE_PREFIX)
+    private fun handleDownload(session: IHTTPSession): Response =
+        handleFileResponse(session, DOWNLOAD_ROUTE_PREFIX, "attachment", "download")
+
+    private fun handlePreview(session: IHTTPSession): Response =
+        handleFileResponse(session, PREVIEW_ROUTE_PREFIX, "inline", "preview")
+
+    private fun handleFileResponse(
+        session: IHTTPSession,
+        routePrefix: String,
+        disposition: String,
+        action: String
+    ): Response {
+        val requestedName = session.uri.removePrefix(routePrefix)
         val safeName = sanitizeFileName(requestedName)
         if (safeName == null || safeName != requestedName) {
             return jsonError(Response.Status.BAD_REQUEST, "Invalid file name")
@@ -191,7 +208,7 @@ class LocalFileServer(
                 return jsonError(Response.Status.NOT_FOUND, "File not found")
             }
 
-            logDebug("download requested: name=${file.name}")
+            logDebug("$action requested: name=${file.name}")
             val mimeType = URLConnection.guessContentTypeFromName(file.name)
                 ?: "application/octet-stream"
             val encodedName = URLEncoder.encode(file.name, StandardCharsets.UTF_8.name())
@@ -204,11 +221,11 @@ class LocalFileServer(
             ).apply {
                 addHeader(
                     "Content-Disposition",
-                    "attachment; filename*=UTF-8''$encodedName"
+                    "$disposition; filename*=UTF-8''$encodedName"
                 )
             }
         } catch (error: IOException) {
-            logDebug("download failed: name=$safeName, reason=${error.message}")
+            logDebug("$action failed: name=$safeName, reason=${error.message}")
             jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file")
         }
     }
@@ -222,6 +239,7 @@ class LocalFileServer(
         }
 
         val contentLength = session.headers["content-length"]?.toLongOrNull()
+
         if (contentLength != null && contentLength > MAX_REQUEST_SIZE_BYTES) {
             return uploadError(Response.Status.PAYLOAD_TOO_LARGE, "File is too large")
         }
@@ -239,7 +257,9 @@ class LocalFileServer(
         val uploadFieldName = UPLOAD_FIELD_NAMES.firstOrNull { fieldName ->
             !session.parms[fieldName].isNullOrBlank() && !uploadedParts[fieldName].isNullOrBlank()
         }
-        val rawFileName = uploadFieldName?.let(session.parms::get)
+        val rawFileName = session.parameters["fileName"]?.firstOrNull()
+            ?: session.parms["fileName"]
+            ?: uploadFieldName?.let(session.parms::get)
         val temporaryPath = uploadFieldName?.let(uploadedParts::get)
         if (rawFileName.isNullOrBlank() || temporaryPath.isNullOrBlank()) {
             return uploadError(Response.Status.BAD_REQUEST, "File field is required")
@@ -251,6 +271,7 @@ class LocalFileServer(
         if (!temporaryFile.isFile) {
             return uploadError(Response.Status.BAD_REQUEST, "Uploaded file is invalid")
         }
+
         if (temporaryFile.length() > MAX_FILE_SIZE_BYTES) {
             return uploadError(Response.Status.PAYLOAD_TOO_LARGE, "File is too large")
         }
@@ -306,16 +327,40 @@ class LocalFileServer(
         val leafName = rawFileName
             .replace('\\', '/')
             .substringAfterLast('/')
+
         val normalizedName = Normalizer.normalize(leafName, Normalizer.Form.NFC)
+
         val cleanedName = normalizedName
             .replace(CONTROL_CHARACTERS, "")
             .replace(UNSAFE_FILE_NAME_CHARACTERS, "_")
             .trim()
             .trim('.')
-            .take(MAX_FILE_NAME_CHARACTERS)
+
+        if (cleanedName.isBlank()) return null
+
+        val dotIndex = cleanedName.lastIndexOf('.')
+
+        val extension = if (dotIndex > 0) {
+            cleanedName.substring(dotIndex)
+        } else {
+            ""
+        }
+
+        val baseName = if (dotIndex > 0) {
+            cleanedName.substring(0, dotIndex)
+        } else {
+            cleanedName
+        }
+
+        val maxBaseLength = (MAX_FILE_NAME_CHARACTERS - extension.length)
+            .coerceAtLeast(1)
+
+        val safeBaseName = baseName
+            .take(maxBaseLength)
+            .trimEnd()
             .trimEnd { Character.isHighSurrogate(it) }
 
-        return cleanedName.ifBlank { null }
+        return (safeBaseName + extension).ifBlank { null }
     }
 
     private fun resolveUniqueFile(directory: File, safeFileName: String): File {
@@ -342,12 +387,18 @@ class LocalFileServer(
         synchronized(fileSaveLock) {
             val directory = getOrCreateSharedDirectory()
             val destination = resolveUniqueFile(directory, safeFileName)
+
             if (destination.canonicalFile.parentFile != directory.canonicalFile) {
                 throw IOException("Invalid file path")
             }
 
             try {
-                temporaryFile.copyTo(destination, overwrite = false)
+                temporaryFile.inputStream().use { input ->
+                    destination.outputStream().use { output ->
+                        input.copyTo(output, bufferSize = 1024 * 1024)
+                        output.flush()
+                    }
+                }
                 if (!destination.isFile || destination.length() != temporaryFile.length()) {
                     throw IOException("Stored file verification failed")
                 }
@@ -418,6 +469,7 @@ class LocalFileServer(
 
         private const val LOG_TAG = "FileShare"
         private const val DOWNLOAD_ROUTE_PREFIX = "/download/"
+        private const val PREVIEW_ROUTE_PREFIX = "/preview/"
         private val UPLOAD_FIELD_NAMES = listOf("file", "files")
         internal const val SHARED_DIRECTORY_NAME = "shared_files"
 

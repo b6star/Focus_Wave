@@ -1,5 +1,7 @@
 ﻿package com.yourssu.focuswave.server
 
+import com.yourssu.focuswave.ui.fileshare.SharedFileUi
+
 data class FileShareUiState(
     val isRunning: Boolean = false,
     val serverAddress: String? = null,
@@ -7,5 +9,6 @@ data class FileShareUiState(
     val filesRevision: Long = 0L,
     val statusText: String = "로컬 공유가 중지되었습니다.",
     val addressHint: String = "서버를 시작하면 접속 주소가 표시됩니다.",
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val uploadedFiles: List<SharedFileUi> = emptyList()
 )
