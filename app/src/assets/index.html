@@ -302,6 +302,87 @@ async function encryptFile(file) {
     };
 }
 
+function pkcs7Unpad(data) {
+    const padLength = data[data.length - 1];
+
+    if (padLength < 1 || padLength > 16) {
+        throw new Error("Invalid padding");
+    }
+
+    return data.slice(0, data.length - padLength);
+}
+
+async function downloadEncryptedFile(fileName) {
+    if (!aesKeyBytes) {
+        alert("보안 연결이 끊어졌습니다. 다시 인증해주세요.");
+        resetAuth();
+        return;
+    }
+
+    const response = await fetch(`/download/${encodeURIComponent(fileName)}`, {
+        method: "GET",
+        credentials: "same-origin"
+    });
+
+    if (!response.ok) {
+        alert(`다운로드 실패: ${response.status}`);
+        return;
+    }
+
+    const nonceBase64 = response.headers.get("X-FocusWave-Nonce");
+    if (!nonceBase64) {
+        alert("다운로드 복호화 정보가 없습니다.");
+        return;
+    }
+
+    const iv = base64ToBytes(nonceBase64);
+    const arrayBuffer = await response.arrayBuffer();
+    const encryptedBytes = new Uint8Array(arrayBuffer);
+
+    console.log("--- [다운로드 수신 완료] ---");
+    console.log(`파일명: ${fileName}`);
+    console.log(`수신된 암호화 데이터 크기: ${encryptedBytes.byteLength} bytes`);
+
+    try {
+        const aes = cbc(aesKeyBytes, iv);
+        const paddedPlainBytes = aes.decrypt(encryptedBytes);
+        console.log(`복호화 성공. 패딩 포함 크기: ${paddedPlainBytes.byteLength} bytes`);
+
+        // 마지막 바이트가 패딩 값이므로 확인
+        const padValue = paddedPlainBytes[paddedPlainBytes.length - 1];
+        console.log(`추출된 패딩 값 (마지막 바이트): ${padValue}`);
+
+        // 데이터가 깨진 경우 마지막 16바이트(1블록)가 어떻게 생겼는지 확인
+        console.log("마지막 16바이트 헥사 덤프:",
+            Array.from(paddedPlainBytes.slice(-16))
+                 .map(b => b.toString(16).padStart(2, '0')).join(' ')
+        );
+
+
+
+        //const plainBytes = pkcs7Unpad(paddedPlainBytes);
+        const plainBytes = paddedPlainBytes;
+        console.log(`언패딩 성공. 최종 평문 크기: ${plainBytes.byteLength} bytes`);
+
+        const blob = new Blob([plainBytes], {
+            type: response.headers.get("Content-Type") || "application/octet-stream"
+        });
+
+        // 다운로드 트리거 로직...
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+    } catch (error) {
+        console.error("복호화 또는 패딩 제거 중 에러 발생:", error);
+    }
+}
+
         async function verifyCode() {
             const codeInput = document.getElementById('authCodeInput');
             const authStatus = document.getElementById('authStatus');
@@ -484,12 +565,7 @@ async function encryptFile(file) {
 
             checkboxes.forEach((cb, index) => {
                 setTimeout(() => {
-                    const a = document.createElement('a');
-                    a.href = `/download/${encodeURIComponent(cb.value)}`;
-                    a.download = cb.value;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
+                   downloadEncryptedFile(cb.value);
                 }, index * 300);
             });
         }
@@ -532,10 +608,14 @@ async function encryptFile(file) {
                         label.appendChild(fileNameText);
 
                         const downloadBtn = document.createElement('a');
-                        downloadBtn.href = `/download/${encodeURIComponent(fileName)}`;
+                        downloadBtn.href = "#";
                         downloadBtn.textContent = "다운로드 ⬇️";
-                        downloadBtn.download = fileName;
                         downloadBtn.className = "file-download";
+
+                        downloadBtn.onclick = function (event) {
+                             event.preventDefault();
+                               downloadEncryptedFile(fileName);
+                        };
 
                         li.appendChild(label);
                         li.appendChild(downloadBtn);
@@ -617,7 +697,7 @@ async function encryptFile(file) {
         window.uploadFile = uploadFile;
         window.toggleSelectAll = toggleSelectAll;
         window.downloadSelected = downloadSelected;
-
+        window.downloadEncryptedFile = downloadEncryptedFile;
         checkConnection();
         setInterval(checkConnection, 3000);
 </script>

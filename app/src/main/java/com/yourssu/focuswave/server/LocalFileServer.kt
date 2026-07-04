@@ -343,17 +343,41 @@ class LocalFileServer(
                 ?: "application/octet-stream"
             val encodedName = URLEncoder.encode(file.name, StandardCharsets.UTF_8.name())
                 .replace("+", "%20")
+
+
+            //암호화
+            val token =
+                getRequestToken(session)
+                    ?: return unauthorizedResponse()
+
+            val aesKey =
+                clientAesKeys[token]
+                    ?: return jsonError(Response.Status.UNAUTHORIZED, "Encryption key is missing")
+
+            val nonceBytes = ByteArray(16)
+            secureRandom.nextBytes(nonceBytes)
+
+            val encryptedStream = FileShareCrypto.encryptAesCbcStream(
+                plainInputStream = FileInputStream(file),
+                nonceBytes = nonceBytes,
+                aesKey = aesKey
+            )
+
             newFixedLengthResponse(
                 Response.Status.OK,
                 mimeType,
-                FileInputStream(file),
-                file.length()
+                encryptedStream,
+                -1L // 길이를 -1L로 주면 NanoHTTPD가 Content-Length 대신 Chunked 방식으로 끝까지 밀어줌
             ).apply {
                 addHeader(
                     "Content-Disposition",
                     "$disposition; filename*=UTF-8''$encodedName"
                 )
+                addHeader("X-FocusWave-Encrypted", "true")
+                addHeader("X-FocusWave-Nonce", Base64.getEncoder().encodeToString(nonceBytes))
             }
+
+
         } catch (error: IOException) {
             logDebug("$action failed: name=$safeName, reason=${error.message}")
             jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file")
@@ -457,7 +481,7 @@ class LocalFileServer(
         nonceBytes: ByteArray,
         aesKey: SecretKey
     ): File = synchronized(fileSaveLock) {
-        val directory = getOrCreateReceivedDirectory()
+        val directory = getOrCreateSharedDirectory()
         val destination = resolveUniqueFile(directory, safeFileName)
 
         if (destination.canonicalFile.parentFile != directory.canonicalFile) {
@@ -512,20 +536,6 @@ class LocalFileServer(
         } else if (!directory.mkdirs() && !directory.isDirectory) {
             throw IOException("Failed to create shared storage directory")
         }
-        return directory
-    }
-
-    private fun getOrCreateReceivedDirectory(): File {
-        val directory = receivedDirectory(appFilesDirectory)
-
-        if (directory.exists()) {
-            if (!directory.isDirectory) {
-                throw IOException("Received storage path is not a directory")
-            }
-        } else if (!directory.mkdirs() && !directory.isDirectory) {
-            throw IOException("Failed to create received storage directory")
-        }
-
         return directory
     }
 
@@ -589,6 +599,8 @@ class LocalFileServer(
         }
     }
 
+
+
     private fun saveUploadedFile(temporaryFile: File, safeFileName: String): File =
         synchronized(fileSaveLock) {
             val directory = getOrCreateSharedDirectory()
@@ -620,7 +632,7 @@ class LocalFileServer(
         safeFileName: String
     ): File =
         synchronized(fileSaveLock) {
-            val directory = getOrCreateReceivedDirectory()
+            val directory = getOrCreateSharedDirectory()
             val destination = resolveUniqueFile(directory, safeFileName)
 
             if (destination.canonicalFile.parentFile != directory.canonicalFile) {
@@ -713,11 +725,10 @@ class LocalFileServer(
         internal const val RECEIVED_DIRECTORY_NAME = "received_files"
         internal const val SHARED_DIRECTORY_NAME = "shared_files"
 
-        internal fun receivedDirectory(appFilesDirectory: File): File =
-            File(appFilesDirectory, RECEIVED_DIRECTORY_NAME)
-
         internal fun sharedDirectory(appFilesDirectory: File): File =
             File(appFilesDirectory, SHARED_DIRECTORY_NAME)
+
+
         private const val MAX_FILE_SIZE_BYTES = 5000L * 1024 * 1024  //최대 5GB
         private const val MAX_MULTIPART_OVERHEAD_BYTES = 1024L * 1024
         private const val MAX_REQUEST_SIZE_BYTES = MAX_FILE_SIZE_BYTES + MAX_MULTIPART_OVERHEAD_BYTES

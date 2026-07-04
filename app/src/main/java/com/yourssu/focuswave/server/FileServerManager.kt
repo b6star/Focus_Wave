@@ -90,6 +90,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         _uiState.value = FileShareUiState()
     }
 
+
     fun getUploadedFiles(): List<SharedFileUi> {
         val directory = LocalFileServer.sharedDirectory(getApplication<Application>().filesDir)
 
@@ -112,6 +113,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             } ?: emptyList()
     }
 
+    // 폰 내부 파일을 웹 서버 shared_files 에 복사
     fun shareFiles(
         files: List<SharedFileUi>,
         onProgress: (fileId: String, percent: Int) -> Unit

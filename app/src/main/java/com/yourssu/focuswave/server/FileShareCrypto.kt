@@ -19,17 +19,57 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
+class SafeCipherInputStream(
+    private val source: java.io.InputStream,
+    private val cipher: javax.crypto.Cipher
+) : java.io.InputStream() {
+    private val buffer = ByteArray(8192)
+    private var outBuffer: ByteArray? = null
+    private var outIndex = 0
+    private var isEof = false
+
+    override fun read(): Int {
+        val b = ByteArray(1)
+        return if (read(b, 0, 1) == -1) -1 else b[0].toInt() and 0xFF
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        while (true) {
+            if (outBuffer != null && outIndex < outBuffer!!.size) {
+                val available = outBuffer!!.size - outIndex
+                val toCopy = available.coerceAtMost(len)
+                System.arraycopy(outBuffer!!, outIndex, b, off, toCopy)
+                outIndex += toCopy
+                return toCopy
+            }
+            if (isEof) return -1
+            val readCount = source.read(buffer)
+            if (readCount == -1) {
+                isEof = true
+                outBuffer = cipher.doFinal() // 💡 여기서 마지막 패딩을 강제로 끄집어냅니다.
+                outIndex = 0
+                continue
+            }
+            val updated = cipher.update(buffer, 0, readCount)
+            if (updated != null && updated.isNotEmpty()) {
+                outBuffer = updated
+                outIndex = 0
+            }
+        }
+    }
+}
+
 object FileShareCrypto {
 
     // X25519 고정 ASN.1 X.509 헤더 (12바이트)
-    private val X25519_HEADER = byteArrayOf(
-        0x30.toByte(), 0x2A.toByte(), 0x30.toByte(), 0x05.toByte(),
-        0x06.toByte(), 0x03.toByte(), 0x2B.toByte(), 0x65.toByte(),
-        0x6E.toByte(), 0x03.toByte(), 0x21.toByte(), 0x00.toByte()
-    )
+    private val X25519_HEADER = intArrayOf(
+        0x30, 0x2A, 0x30, 0x05,
+        0x06, 0x03, 0x2B, 0x65,
+        0x6E, 0x03, 0x21, 0x00
+    ).map { it.toByte() }.toByteArray()
 
     fun generateServerKeyPair(): KeyPair {
-        val keyPairGenerator = KeyPairGenerator.getInstance("X25519")
+        val keyPairGenerator = KeyPairGenerator.getInstance("X25519")  //ECDH Key Exchange Algorithm
         return keyPairGenerator.generateKeyPair()
     }
 
@@ -81,21 +121,21 @@ object FileShareCrypto {
         return SecretKeySpec(aesKeyBytes, "AES")
     }
 
-    fun decryptAesGcm(encryptedBytes: ByteArray, nonceBytes: ByteArray, aesKey: SecretKey): ByteArray {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        val gcmParameterSpec = GCMParameterSpec(128, nonceBytes)
-        cipher.init(Cipher.DECRYPT_MODE, aesKey, gcmParameterSpec)
-        return cipher.doFinal(encryptedBytes)
+    fun encryptAesCbcStream(
+        plainInputStream: InputStream,
+        nonceBytes: ByteArray,
+        aesKey: SecretKey
+    ): InputStream {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
+        return SafeCipherInputStream(plainInputStream, cipher)
     }
-
-
     fun decryptAesCbcStream(
         encryptedInputStream: InputStream,
         decryptedOutputStream: OutputStream,
-        nonceBytes: ByteArray, // IV로 사용됨
+        nonceBytes: ByteArray,
         aesKey: SecretKey
     ) {
-        // 호환성이 가장 좋은 CBC 모드와 PKCS5Padding을 사용합니다.
         val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
         val ivSpec = IvParameterSpec(nonceBytes)
 
@@ -142,4 +182,6 @@ object FileShareCrypto {
         mac.init(SecretKeySpec(key, "HmacSHA256"))
         return mac.doFinal(data)
     }
+
+
 }

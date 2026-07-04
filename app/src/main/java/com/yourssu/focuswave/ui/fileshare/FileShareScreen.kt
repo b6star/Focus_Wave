@@ -255,7 +255,7 @@ fun FileShareOverlay(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     FileShareTabButton(
-                        text = "파일 받기",
+                        text = "파일 다운로드",
                         selected = pagerState.currentPage == 0,
                         selectedColor = Color(0xFF8A86E6),
                         onClick = {
@@ -267,7 +267,7 @@ fun FileShareOverlay(
                     )
 
                     FileShareTabButton(
-                        text = "PC에서 다운로드",
+                        text = "파일 업로드",
                         selected = pagerState.currentPage == 1,
                         selectedColor = Color(0xFFE68A86),
                         onClick = {
@@ -302,7 +302,7 @@ fun FileShareOverlay(
                         .heightIn(min = 230.dp, max = 480.dp)
                 ) { page ->
                     when (page) {
-                        0 -> PcToPhoneSection(
+                        0 -> DownloadSection(
                             receivedFiles = receivedFiles,
                             onSaveClick = { file ->
                                 saveReceivedFileToDownloads(file)
@@ -310,7 +310,7 @@ fun FileShareOverlay(
                             onPreviewClick = { file -> previewFile = file }
                         )
 
-                        1 -> PhoneToPcSection(
+                        1 -> UploadSection(
                             selectedFiles = selectedFiles,
                             isServerRunning = uiState.isRunning,
                             sendProgressMap = sendProgressMap,
@@ -357,9 +357,7 @@ fun FileShareOverlay(
                 FilePreviewDialog(
                     file = file,
                     onDismiss = { previewFile = null },
-                    onSaveClick = {
-                        saveReceivedFileToDownloads(file)
-                    }
+                    onSaveClick = { saveReceivedFileToDownloads(file) }
                 )
             }
 
@@ -471,7 +469,7 @@ private fun ConnectionStatusCard(
 }
 
 @Composable
-private fun PcToPhoneSection(
+private fun DownloadSection(
     receivedFiles: List<SharedFileUi>,
     onSaveClick: (SharedFileUi) -> Unit,
     onPreviewClick: (SharedFileUi) -> Unit
@@ -502,7 +500,7 @@ private fun PcToPhoneSection(
                     FileRow(
                         file = file,
                         showPreviewButton = file.isPreviewable(),
-                        actionText = "Downloads에 저장",
+                        actionText = "저장",
                         onActionClick = { onSaveClick(file) },
                         onPreviewClick = { onPreviewClick(file) }
                     )
@@ -513,7 +511,7 @@ private fun PcToPhoneSection(
 }
 
 @Composable
-private fun PhoneToPcSection(
+private fun UploadSection(
     selectedFiles: List<SharedFileUi>,
     isServerRunning: Boolean,
     sendProgressMap: Map<String, Int>,
@@ -522,22 +520,16 @@ private fun PhoneToPcSection(
     onSendClick: () -> Unit
 ) {
     SectionCard {
-
-        Text(
-            text = "📱 폰 → 💻 PC",
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium
-        )
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "선택한 파일을 폰 서버에 공유하면 PC 웹에서 다운로드할 수 있습니다.",
-                color = Color.White.copy(alpha = 0.7f),
-                style = MaterialTheme.typography.bodySmall
+                text = "📱 폰 → 💻 PC",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium
             )
+
             if (!selectedFiles.isEmpty()) {
                 Text(
                     text = "${selectedFiles.size} files",
@@ -547,6 +539,12 @@ private fun PhoneToPcSection(
             }
 
         }
+
+        Text(
+            text = "파일을 폰 서버에 공유하면 PC 웹에서 다운로드할 수 있습니다.",
+            color = Color.White.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.bodySmall
+        )
 
 
         Button(
@@ -574,8 +572,7 @@ private fun PhoneToPcSection(
                         file = file,
                         actionText = "삭제",
                         progress = sendProgressMap[file.id],
-                        onActionClick = { onRemoveFileClick(file) },
-                        onPreviewClick = {}
+                        onActionClick = { onRemoveFileClick(file) }
                     )
                 }
             }
@@ -735,38 +732,65 @@ private fun FileRow(
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(
-            text = file.name,
-            color = Color.White,
-            modifier = Modifier.fillMaxWidth(),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            softWrap = true
-        )
-
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = buildString {
-                    append(file.sizeBytes.toFileSizeText())
-                    file.lastModified?.let { modifiedAt ->
-                        append(" · ")
-                        append(modifiedAt.toModifiedTimeText())
-                    }
-                },
-                color = Color.White.copy(alpha = 0.55f),
-                style = MaterialTheme.typography.bodySmall,
+            Column(
                 modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                softWrap = false
-            )
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = file.name,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    softWrap = true
+                )
 
+                Text(
+                    text = buildString {
+                        append(file.sizeBytes.toFileSizeText())
+                        file.lastModified?.let { modifiedAt ->
+                            append(" · ")
+                            append(modifiedAt.toModifiedTimeText())
+                        }
+                    },
+                    color = Color.White.copy(alpha = 0.55f),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (showPreviewButton && onPreviewClick != null) {
+                Text(
+                    text = "열기",
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier
+                        .padding(start = 12.dp)
+                        .clickable {
+                            onPreviewClick()
+                        }
+                )
+            }
+            if (actionText != null && onActionClick != null) {
+                Text(
+                    text = actionText,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier
+                        .padding(start = 12.dp)
+                        .clickable {
+                            onActionClick()
+                        }
+                )
+            }
             progress?.let {
                 Text(
-                    text = if (it >= 100) "완료" else "$it%",
+                    text = if (it >= 100) "🟢" else "$it%",
                     color = Color(0xFFFFD700),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(start = 8.dp)
@@ -774,38 +798,6 @@ private fun FileRow(
             }
         }
 
-        if (
-            (showPreviewButton && onPreviewClick != null) ||
-            (actionText != null && onActionClick != null)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(
-                    8.dp,
-                    Alignment.End
-                ),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (showPreviewButton && onPreviewClick != null) {
-                    TextButton(onClick = onPreviewClick) {
-                        Text(
-                            text = "열기",
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-                if (actionText != null && onActionClick != null) {
-                    TextButton(onClick = onActionClick) {
-                        Text(
-                            text = actionText,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1022,7 +1014,7 @@ private fun Uri.toSharedFileUi(
 }
 
 private fun Context.loadSharedFiles(): List<SharedFileUi> {
-    val directory = LocalFileServer.receivedDirectory(applicationContext.filesDir)
+    val directory = LocalFileServer.sharedDirectory(applicationContext.filesDir)
     Log.d(FILE_SHARE_LOG_TAG, "app refresh directory: ${directory.absolutePath}")
     if (!directory.exists()) {
         Log.d(FILE_SHARE_LOG_TAG, "app refresh files found: count=0")
@@ -1191,7 +1183,7 @@ private suspend fun Context.saveSharedFileToDownloads(
 }
 
 private fun Context.requireReadableSharedFile(fileName: String): File {
-    val directory = LocalFileServer.receivedDirectory(applicationContext.filesDir)
+    val directory = LocalFileServer.sharedDirectory(applicationContext.filesDir)
     val source = File(directory, fileName)
     Log.d(
         FILE_SHARE_LOG_TAG,
