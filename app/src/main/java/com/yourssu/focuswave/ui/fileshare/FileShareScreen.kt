@@ -45,6 +45,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.server.FileShareUiState
@@ -154,30 +158,6 @@ fun FileShareOverlay(
         }
     }
 
-    fun stageSelectedFilesForPc() {
-        if (!uiState.isRunning) {
-            fileMessage = null
-            fileErrorMessage = "PC에서 다운로드하려면 서버를 먼저 시작해주세요."
-            return
-        }
-
-        coroutineScope.launch {
-            fileErrorMessage = null
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    context.stageFilesForPc(selectedFiles)
-                }
-            }.onSuccess { sharedCount ->
-                selectedFiles = emptyList()
-                fileMessage = "${sharedCount}개 파일을 PC 다운로드 목록에 추가했습니다."
-                refreshSharedFiles(showMessage = false)
-            }.onFailure { error ->
-                fileMessage = null
-                fileErrorMessage = error.localizedMessage ?: "파일 공유 준비에 실패했습니다."
-            }
-        }
-    }
-
     LaunchedEffect(uiState.filesRevision) {
         refreshSharedFiles(showMessage = false)
     }
@@ -213,20 +193,14 @@ fun FileShareOverlay(
         ) {
             HeaderSection(onDismiss = onDismiss)
 
-            ConnectionStatusCard(
+            FileShareServerCard(
                 uiState = uiState,
+                pcAccessUrl = pcAccessUrl,
                 onStartClick = onStartClick,
                 onStopClick = {
                     onStopClick()
                     selectedFiles = emptyList()
-                }
-            )
-
-            PcAccessInfoCard(
-                uiState = uiState,
-                pcAccessUrl = pcAccessUrl,
-                isServerRunning = uiState.isRunning,
-                authCode = uiState.authCode,
+                },
                 onCopyUrlClick = {
                     clipboardManager.setText(AnnotatedString(pcAccessUrl))
                 },
@@ -236,8 +210,8 @@ fun FileShareOverlay(
                     }
                 },
                 onRefreshClick = fileServerManager::regenerateAuthCode
-
             )
+
 
             //File Sharing panel
             Column(
@@ -416,52 +390,147 @@ private fun HeaderSection(
 }
 
 @Composable
-private fun ConnectionStatusCard(
+private fun FileShareServerCard(
     uiState: FileShareUiState,
+    pcAccessUrl: String,
     onStartClick: () -> Unit,
-    onStopClick: () -> Unit
+    onStopClick: () -> Unit,
+    onCopyUrlClick: () -> Unit,
+    onCopyAuthCodeClick: () -> Unit,
+    onRefreshClick: () -> Unit
 ) {
+    var isExpanded by remember { mutableStateOf(true) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text(
-            text = uiState.statusText,
-            color = if (uiState.isRunning) Color(0xFF8BE9A8) else Color(0xFFFFD700),
-            style = MaterialTheme.typography.bodyMedium
-        )
-        Text(
-            text = uiState.addressHint,
-            color = Color.White.copy(alpha = 0.7f),
-            style = MaterialTheme.typography.bodySmall
-        )
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Button(
-                onClick = onStartClick,
-                enabled = !uiState.isRunning,
+            Column(
                 modifier = Modifier.weight(1f)
             ) {
-                Text("서버 시작")
+                Text(
+                    text = uiState.statusText,
+                    color = if (uiState.isRunning) Color(0xFF8BE9A8) else Color(0xFFFFD700),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+
+                Text(
+                    text = uiState.addressHint,
+                    color = Color.White.copy(alpha = 0.65f),
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-            Button(
-                onClick = onStopClick,
-                enabled = uiState.isRunning,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E3B46))
+
+            IconButton(
+                onClick = {
+                    if (uiState.isRunning) onStopClick() else onStartClick()
+                }
             ) {
-                Text("서버 중지")
+                Icon(
+                    imageVector = Icons.Default.PowerSettingsNew,
+                    contentDescription = if (uiState.isRunning) "서버 중지" else "서버 시작",
+                    tint = if (uiState.isRunning) Color(0xFF8BE9A8).copy(alpha = 1f) else Color.White.copy(alpha = 0.5f)
+                )
             }
         }
+
         uiState.errorMessage?.let { message ->
             Text(
                 text = message,
                 color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
+        HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "PC 접속 주소",
+                modifier = Modifier.weight(1f),
+                color = Color.White.copy(alpha = 0.72f),
+                style = MaterialTheme.typography.labelMedium
+            )
+
+            IconButton(
+                onClick = { isExpanded = !isExpanded }
+            ) {
+                Icon(
+                    imageVector = if (isExpanded) {
+                        Icons.Default.KeyboardArrowUp
+                    } else {
+                        Icons.Default.KeyboardArrowDown
+                    },
+                    contentDescription = if (isExpanded) "접기" else "펼치기",
+                    tint = Color.White.copy(alpha = 0.7f)
+                )
+            }
+        }
+
+        if (isExpanded) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SelectionContainer(
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = if (pcAccessUrl.isBlank()) {
+                            "서버를 시작하면 접속 주소가 표시됩니다."
+                        } else {
+                            pcAccessUrl
+                        },
+                        color = Color(0xFFB8B5FF),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontSize = 18.sp
+                    )
+                }
+
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (uiState.isRunning && uiState.authCode != null) {
+                    Text(
+                        text = uiState.authCode ,
+                        modifier = Modifier.weight(1f),
+                        color = Color(0xFFF2F1FF),
+                        style = MaterialTheme.typography.headlineLarge,
+                        letterSpacing = 4.sp
+                    )
+
+                    TextButton(
+                        onClick = onRefreshClick,
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) {
+                        Text("재발급")
+                    }
+                } else {
+                    Text(
+                        text = "서버 시작 후 표시됩니다.",
+                        modifier = Modifier.weight(1f),
+                        color = Color.White.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+
+            Text(
+                text = "PC 브라우저에서 위 주소로 접속한 뒤 인증코드를 입력하세요.",
+                color = Color.White.copy(alpha = 0.55f),
                 style = MaterialTheme.typography.bodySmall
             )
         }
@@ -612,109 +681,6 @@ private fun SectionCard(
     )
 }
 
-@Composable
-private fun PcAccessInfoCard(
-    uiState: FileShareUiState,
-    pcAccessUrl: String,
-    isServerRunning: Boolean,
-    authCode: String?,
-    onCopyUrlClick: () -> Unit,
-    onCopyAuthCodeClick: () -> Unit,
-    onRefreshClick: () -> Unit
-) {
-    var isCodeVisible by remember(
-        uiState.isRunning,
-            authCode
-        ) { mutableStateOf(true) }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            text = "PC 접속 주소",
-            color = Color.White.copy(alpha = 0.72f),
-            style = MaterialTheme.typography.labelMedium
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = if (pcAccessUrl.isBlank()) {
-                    "서버를 시작하면 접속 주소가 표시됩니다."
-                } else {
-                    pcAccessUrl
-                },
-                modifier = Modifier.weight(1f),
-                color = Color(0xFF8A86E6),
-                style = MaterialTheme.typography.titleMedium
-            )
-            TextButton(
-                onClick = onCopyUrlClick,
-                enabled = pcAccessUrl.isNotBlank()
-            ) {
-                Text("복사")
-            }
-        }
-
-        HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
-
-        Text(
-            text = "인증코드",
-            color = Color.White.copy(alpha = 0.72f),
-            style = MaterialTheme.typography.labelMedium
-        )
-
-        if (isServerRunning && authCode != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f)
-                ) {
-                    TextButton(
-                        onClick = {
-                            isCodeVisible =  !isCodeVisible
-                        }
-                    ){
-                        Text(if (isCodeVisible) "가리기" else "보기")
-                    }
-
-                    Text(
-                        text = if (isCodeVisible) authCode else "******",
-                        color = Color(0xFFF2F1FF),
-                        style = MaterialTheme.typography.headlineLarge,
-                        letterSpacing = 4.sp
-                    )
-                }
-
-                TextButton(onClick = onCopyAuthCodeClick) {
-                    Text("복사")
-                }
-                TextButton(onClick = onRefreshClick) {
-                    Text("재발급")
-                }
-            }
-        } else {
-            Text(
-                text = "서버 시작 후 인증코드가 표시됩니다.",
-                color = Color.White.copy(alpha = 0.65f),
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-
-        Text(
-            text = "PC 브라우저에서 위 주소로 접속한 뒤 인증코드를 입력하세요.",
-            color = Color.White.copy(alpha = 0.65f),
-            style = MaterialTheme.typography.bodySmall
-        )
-    }
-}
 
 @Composable
 private fun FileRow(
@@ -980,7 +946,7 @@ private fun EmptyText(
 }
 
 private fun Uri.toSharedFileUi(
-    context: android.content.Context,
+    context: Context,
     id: String
 ): SharedFileUi {
     val contentResolver = context.contentResolver
@@ -1164,7 +1130,7 @@ private suspend fun Context.saveSharedFileToDownloads(
         Log.d(
             FILE_SHARE_LOG_TAG,
             "MediaStore save succeeded: uri=$insertedUri, " +
-                "name=$targetName, size=$copiedBytes"
+                    "name=$targetName, size=$copiedBytes"
         )
         FileActionResult(true, "Downloads 폴더에 $targetName 파일이 저장되었습니다.")
     } catch (error: SharedFileAccessException) {
@@ -1188,7 +1154,7 @@ private fun Context.requireReadableSharedFile(fileName: String): File {
     Log.d(
         FILE_SHARE_LOG_TAG,
         "source file: path=${source.absolutePath}, exists=${source.exists()}, " +
-            "length=${source.length()}, canRead=${source.canRead()}"
+                "length=${source.length()}, canRead=${source.canRead()}"
     )
     val validParent = runCatching {
         source.canonicalFile.parentFile == directory.canonicalFile

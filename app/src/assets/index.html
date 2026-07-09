@@ -16,7 +16,9 @@
             align-items: center;
         }
 
-        h1 { color: #8A86E6; }
+        h1 {
+            color: #8A86E6;
+        }
 
         .container {
             display: none;
@@ -45,7 +47,9 @@
             width: 100%;
         }
 
-        button:hover { background-color: #d87b77; }
+            button:hover {
+                background-color: #d87b77;
+            }
 
         input[type="file"] {
             margin-bottom: 10px;
@@ -87,7 +91,9 @@
             cursor: pointer;
         }
 
-        a:hover { text-decoration: underline; }
+            a:hover {
+                text-decoration: underline;
+            }
 
         .checkbox-label {
             display: flex;
@@ -98,9 +104,9 @@
             min-width: 0;
         }
 
-        .checkbox-label input {
-            flex: 0 0 auto;
-        }
+            .checkbox-label input {
+                flex: 0 0 auto;
+            }
 
         .file-name {
             flex: 1;
@@ -146,6 +152,30 @@
             font-size: 12px;
             color: #E68A86;
         }
+
+        .drop-zone {
+            border: 2px dashed #8A86E6;
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            background-color: rgba(138, 134, 230, 0.05);
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            margin-bottom: 15px;
+        }
+
+            .drop-zone.dragover {
+                background-color: rgba(230, 138, 134, 0.15);
+                border-color: #E68A86;
+                transform: scale(1.02);
+            }
+
+            .drop-zone p {
+                margin: 5px 0;
+                font-size: 18px;
+                font-weight: bold;
+                color: #ccc;
+            }
     </style>
 </head>
 <body>
@@ -160,13 +190,11 @@
     <h2>🔐 인증 코드 입력</h2>
     <p>폰 화면에 표시된 6자리 인증 코드를 입력하세요.</p>
 
-    <input
-            type="text"
-            id="authCodeInput"
-            maxlength="6"
-            inputmode="numeric"
-            placeholder="예: 123456"
-    >
+    <input type="text"
+           id="authCodeInput"
+           maxlength="6"
+           inputmode="numeric"
+           placeholder="예: 123456">
 
     <button onclick="verifyCode()">접속하기</button>
     <p id="authStatus"></p>
@@ -175,9 +203,16 @@
 <div class="container" id="fileShareContainer">
     <div class="card">
         <h2>💻 PC ➡️ 📱 폰</h2>
-        <p>폰으로 보낼 파일을 여러 개 선택할 수 있습니다.</p>
+        <p>폰으로 보낼 파일을 선택하거나 아래 영역에 끌어다 놓으세요.</p>
 
-        <input type="file" id="fileInput" name="files" multiple>
+        <!-- 💡 새롭게 추가된 드롭존 영역 -->
+        <div id="dropZone" class="drop-zone" onclick="document.getElementById('fileInput').click()">
+            <p>📥 Drop files here!</p>
+            <span style="font-size: 14px; color: #aaa;">(또는 클릭하여 파일 선택)</span>
+            <!-- 기본 인풋은 display: none 으로 숨깁니다 -->
+            <input type="file" id="fileInput" name="files" multiple style="display: none;">
+        </div>
+
         <button onclick="uploadFile()">🚀 폰으로 전송</button>
         <p id="uploadStatus"></p>
     </div>
@@ -208,498 +243,644 @@
     import { hkdf } from "https://esm.sh/@noble/hashes@1.8.0/hkdf?bundle";
     import { sha256 } from "https://esm.sh/@noble/hashes@1.8.0/sha2?bundle";
 
-        let isAuthenticated = false;
-        let fileListRefreshTimer = null;
-        let clientPrivateKey = null;
-        let clientPublicKey = null;
-        let aesKeyBytes = null;
-        const textEncoder = new TextEncoder();
+    let isAuthenticated = false;
+    let fileListRefreshTimer = null;
+    let clientPrivateKey = null;
+    let clientPublicKey = null;
+    let aesKeyBytes = null;
+    const textEncoder = new TextEncoder();
+    const textDecoder = new TextDecoder();
 
-        function bytesToBase64(bytes) {
-            let binary = "";
-            bytes.forEach(byte => { binary += String.fromCharCode(byte); });
-            return btoa(binary);
-        }
+    const downloadState = {};
 
-        function base64ToBytes(base64) {
-            const binary = atob(base64);
-            const bytes = new Uint8Array(binary.length);
-            for (let i = 0; i < binary.length; i++) {
-                bytes[i] = binary.charCodeAt(i);
+    function updateDownloadBtnUI(fileName) {
+        const btns = document.querySelectorAll('.file-download');
+        btns.forEach(btn => {
+            if (btn.getAttribute('data-filename') === fileName) {
+                const state = downloadState[fileName];
+                if (state) {
+                    btn.textContent = state.text;
+                    btn.style.color = state.color;
+                    btn.style.pointerEvents = state.disabled ? "none" : "auto";
+                } else {
+                    btn.textContent = "다운로드 ⬇️";
+                    btn.style.color = "";
+                    btn.style.pointerEvents = "auto";
+                }
             }
-            return bytes;
+        });
+    }
+
+    function bytesToBase64(bytes) {
+        let binary = "";
+        bytes.forEach(byte => { binary += String.fromCharCode(byte); });
+        return btoa(binary);
+    }
+
+    function base64ToBytes(base64) {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+        }
+        return bytes;
+    }
+
+    function randomBytes(length) {
+        const bytes = new Uint8Array(length);
+        crypto.getRandomValues(bytes);
+        return bytes;
+    }
+
+    function deriveAesKey(sharedSecret) {
+        return hkdf(
+            sha256,
+            sharedSecret,
+            textEncoder.encode("FocusWave FileShare Salt"),
+            textEncoder.encode("FocusWave ECDH AES-CBC v1"),
+            32
+        );
+    }
+
+    async function setupEncryption() {
+        clientPrivateKey = x25519.utils.randomPrivateKey();
+        clientPublicKey = x25519.getPublicKey(clientPrivateKey);
+
+        const response = await fetch("/crypto/exchange", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ clientPublicKey: bytesToBase64(clientPublicKey) })
+        });
+
+        if (!response.ok) throw new Error("Key exchange failed");
+
+        const result = await response.json();
+        const serverPublicKey = base64ToBytes(result.serverPublicKey);
+        const sharedSecret = x25519.getSharedSecret(clientPrivateKey, serverPublicKey);
+
+        aesKeyBytes = deriveAesKey(sharedSecret);
+    }
+
+
+
+    function pkcs7Pad(data) {
+        const blockSize = 16;
+        const padLength = blockSize - (data.length % blockSize);
+        const padded = new Uint8Array(data.length + padLength);
+        padded.set(data);
+        padded.fill(padLength, data.length);
+        return padded;
         }
 
-        function randomBytes(length) {
-            const bytes = new Uint8Array(length);
-            crypto.getRandomValues(bytes);
-            return bytes;
+        async function encryptFileName(fileName) {
+            const iv = randomBytes(16);
+            const plainBytes = textEncoder.encode(fileName);
+            if (plainBytes.length > 256) throw new Error("File name too long");
+            const padded256Bytes = new Uint8Array(256);
+            padded256Bytes.set(plainBytes);
+            const finalPaddedBytes = pkcs7Pad(padded256Bytes);
+
+            const aes = cbc(aesKeyBytes, iv);
+            const encryptedBytes = aes.encrypt(finalPaddedBytes);
+
+            return {
+                encryptedBase64: bytesToBase64(encryptedBytes),
+                metaNonceBase64: bytesToBase64(iv)
+            };
         }
 
-        function deriveAesKey(sharedSecret) {
-            return hkdf(
-                sha256,
-                sharedSecret,
-                textEncoder.encode("FocusWave FileShare Salt"),
-                textEncoder.encode("FocusWave ECDH AES-GCM v1"),
-                32
-            );
+
+    function decryptFileName(encryptedBase64, nonceBase64) {
+        const iv = base64ToBytes(nonceBase64);
+        const encryptedBytes = base64ToBytes(encryptedBase64);
+
+        const aes = cbc(aesKeyBytes, iv);
+        const decryptedWithPadding = aes.decrypt(encryptedBytes);
+
+    // 1. PKCS7 패딩 찌꺼기 우선 제거 (272바이트 -> 256바이트로 복원)
+        const padded256Bytes = pkcs7Unpad(decryptedWithPadding);
+
+        let actualLength = padded256Bytes.indexOf(0);
+        if (actualLength === -1) actualLength = padded256Bytes.length;
+
+        const plainBytes = padded256Bytes.slice(0, actualLength);
+
+        return textDecoder.decode(plainBytes);
+}
+
+
+    async function encryptFile(file) {
+        if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
+
+        // 브라우저 렌더링 멈춤 방지
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        // CBC 모드는 16바이트 IV를 사용합니다.
+        const iv = randomBytes(16);
+        const plainBuffer = await file.arrayBuffer();
+        const plainBytes = new Uint8Array(plainBuffer);
+
+        // 데이터 길이를 16배수로 맞추기 위해 패딩 적용
+        // const paddedBytes = pkcs7Pad(plainBytes);
+
+        // noble/ciphers의 cbc 모드 적용
+        const aes = cbc(aesKeyBytes, iv);
+        const encryptedBytes = aes.encrypt(plainBytes);
+
+        return {
+            encryptedBlob: new Blob([encryptedBytes]),
+            nonceBase64: bytesToBase64(iv)
+        };
+    }
+
+    function pkcs7Unpad(data) {
+        const padLength = data[data.length - 1];
+
+        if (padLength < 1 || padLength > 16) {
+            throw new Error("Invalid padding");
         }
 
-        async function setupEncryption() {
-            clientPrivateKey = x25519.utils.randomPrivateKey();
-            clientPublicKey = x25519.getPublicKey(clientPrivateKey);
+        return data.slice(0, data.length - padLength);
+    }
 
-            const response = await fetch("/crypto/exchange", {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ clientPublicKey: bytesToBase64(clientPublicKey) })
+    // 💡 btnElement 파라미터 삭제
+    async function downloadEncryptedFile(fileName) {
+        if (!aesKeyBytes) {
+            alert("보안 연결이 끊어졌습니다. 다시 인증해주세요.");
+            resetAuth();
+            return;
+        }
+
+        const metaCrypto = await encryptFileName(fileName);
+
+        const encryptedUrlParam = encodeURIComponent(metaCrypto.encryptedBase64);
+        const nonceUrlParam = encodeURIComponent(metaCrypto.metaNonceBase64);
+
+        // 💡 장부 기록 및 UI 업데이트
+        downloadState[fileName] = { text: "요청 중... ⏳", color: "#FFD700", disabled: true };
+        updateDownloadBtnUI(fileName);
+
+        const response = await fetch(`/download/${encryptedUrlParam}?nonce=${nonceUrlParam}`, {
+            method: "GET",
+            credentials: "same-origin"
+        });
+
+        if (!response.ok) {
+            alert(`다운로드 실패: ${response.status}`);
+            downloadState[fileName] = { text: "실패 ❌", color: "#F44336", disabled: true };
+            updateDownloadBtnUI(fileName);
+            return;
+        }
+
+        const nonceBase64 = response.headers.get("X-FocusWave-Nonce");
+        if (!nonceBase64) {
+            alert("다운로드 복호화 정보가 없습니다.");
+            return;
+        }
+        const metaEncryptedBase64 = response.headers.get("X-File-Name-Encrypted");
+        const metaNonceBase64 = response.headers.get("X-Meta-Nonce");
+
+        let actualFileName = fileName;
+        if (metaEncryptedBase64 && metaNonceBase64) {
+            try {
+                actualFileName = decryptFileName(metaEncryptedBase64, metaNonceBase64);
+            } catch (e) {
+                console.error("파일명 복호화 에러:", e);
+            }
+        }
+
+        const iv = base64ToBytes(nonceBase64);
+        const contentLength = response.headers.get('Content-Length');
+        const totalBytes = parseInt(contentLength, 10);
+        let loadedBytes = 0;
+
+        const reader = response.body.getReader();
+        const chunks = [];
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            chunks.push(value);
+            loadedBytes += value.length;
+
+            const percent = Math.round((loadedBytes / totalBytes) * 100);
+
+            // 💡 퍼센트 업데이트
+            downloadState[fileName] = { text: `다운로드 중 ${percent}%`, color: "#FFD700", disabled: true };
+            updateDownloadBtnUI(fileName);
+        }
+
+        const encryptedBytes = new Uint8Array(loadedBytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+            encryptedBytes.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        try {
+            const aes = cbc(aesKeyBytes, iv);
+            const paddedPlainBytes = aes.decrypt(encryptedBytes);
+
+            // 주석 유지
+            // const plainBytes = pkcs7Unpad(paddedPlainBytes);
+            const plainBytes = paddedPlainBytes;
+
+            const blob = new Blob([plainBytes], {
+                type: response.headers.get("Content-Type") || "application/octet-stream"
             });
 
-            if (!response.ok) throw new Error("Key exchange failed");
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = actualFileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
 
-            const result = await response.json();
-            const serverPublicKey = base64ToBytes(result.serverPublicKey);
-            const sharedSecret = x25519.getSharedSecret(clientPrivateKey, serverPublicKey);
+            // 💡 다운로드 완료 처리 및 2초 뒤 장부에서 삭제
+            downloadState[fileName] = { text: "완료 ✅", color: "#4CAF50", disabled: true };
+            updateDownloadBtnUI(fileName);
 
-            aesKeyBytes = deriveAesKey(sharedSecret);
+            setTimeout(() => {
+                delete downloadState[fileName];
+                updateDownloadBtnUI(fileName);
+            }, 2000);
+
+        } catch (error) {
+            console.error("복호화 또는 패딩 제거 중 에러 발생:", error);
+            downloadState[fileName] = { text: "에러 ❌", color: "#F44336", disabled: true };
+            updateDownloadBtnUI(fileName);
+        }
+    }
+
+    async function verifyCode() {
+        const codeInput = document.getElementById('authCodeInput');
+        const authStatus = document.getElementById('authStatus');
+        const authCard = document.getElementById('authCard');
+        const fileShareContainer = document.getElementById('fileShareContainer');
+        const code = codeInput.value.trim();
+
+        if (code.length !== 6) {
+            authStatus.innerText = "6자리 인증 코드를 입력해주세요.";
+            return;
         }
 
+        authStatus.innerText = "인증 중...";
 
+        try {
+            const response = await fetch('/auth', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code: code })
+            });
 
-function pkcs7Pad(data) {
-    const blockSize = 16;
-    const padLength = blockSize - (data.length % blockSize);
-    const padded = new Uint8Array(data.length + padLength);
-    padded.set(data);
-    padded.fill(padLength, data.length);
-    return padded;
-}
+            if (response.ok) {
+                authStatus.innerText = "보안 연결 설정 중...";
+                await setupEncryption();
 
+                isAuthenticated = true;
+                clearFileShareUi();
+                authCard.style.display = "none";
+                fileShareContainer.style.display = "flex";
 
-async function encryptFile(file) {
-    if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
+                fetchFileList();
 
-    // 브라우저 렌더링 멈춤 방지
-    await new Promise(resolve => setTimeout(resolve, 100));
+                if (fileListRefreshTimer !== null) {
+                    clearInterval(fileListRefreshTimer);
+                }
 
-    // CBC 모드는 16바이트 IV를 사용합니다.
-    const iv = randomBytes(16);
-    const plainBuffer = await file.arrayBuffer();
-    const plainBytes = new Uint8Array(plainBuffer);
+                fileListRefreshTimer = setInterval(() => {
+                    fetchFileList();
+                }, 2000);
 
-    // 데이터 길이를 16배수로 맞추기 위해 패딩 적용
-    const paddedBytes = pkcs7Pad(plainBytes);
+            } else {
+                let errorData;
+                try {
+                    errorData = await response.json();
+                } catch (e) {
+                    errorData = null;
+                }
 
-    // noble/ciphers의 cbc 모드 적용
-    const aes = cbc(aesKeyBytes, iv);
-    const encryptedBytes = aes.encrypt(paddedBytes);
-
-    return {
-        encryptedBlob: new Blob([encryptedBytes]),
-        nonceBase64: bytesToBase64(iv)
-    };
-}
-
-function pkcs7Unpad(data) {
-    const padLength = data[data.length - 1];
-
-    if (padLength < 1 || padLength > 16) {
-        throw new Error("Invalid padding");
+                if (errorData && errorData.message) {
+                    authStatus.innerText = errorData.message;
+                } else {
+                    if (response.status === 401) {
+                        authStatus.innerText = "인증 코드가 올바르지 않습니다.";
+                    } else if (response.status === 403) {
+                        authStatus.innerText = "영구 차단됨: 서버가 재시작될 때까지 접속할 수 없습니다.";
+                    } else if (response.status === 429) {
+                        authStatus.innerText = "요청 횟수 초과: 1분 뒤에 다시 시도해주세요.";
+                    } else {
+                        authStatus.innerText = `인증 실패: 서버 에러 (${response.status})`;
+                    }
+                }
+            }
+        } catch (error) {
+            authStatus.innerText = "서버(폰)에 연결할 수 없습니다. Wi-Fi 상태를 확인해 주세요.";
+        }
     }
 
-    return data.slice(0, data.length - padLength);
-}
+    async function uploadFile() {
+        if (!isAuthenticated) {
+            alert("먼저 인증 코드를 입력해주세요.");
+            return;
+        }
 
-async function downloadEncryptedFile(fileName) {
-    if (!aesKeyBytes) {
-        alert("보안 연결이 끊어졌습니다. 다시 인증해주세요.");
-        resetAuth();
-        return;
+        const fileInput = document.getElementById('fileInput');
+        const statusText = document.getElementById('uploadStatus');
+        const files = Array.from(fileInput.files);
+
+        if (files.length === 0) {
+            alert("파일을 먼저 선택해주세요!");
+            return;
+        }
+
+        let successCount = 0;
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const success = await uploadOneFile(file, i + 1, files.length, statusText);
+            if (!success) return;
+            successCount++;
+        }
+
+        statusText.innerText = `${successCount}개 파일 전송 성공!`;
+        fileInput.value = "";
+        fetchFileList();
     }
 
-    const response = await fetch(`/download/${encodeURIComponent(fileName)}`, {
-        method: "GET",
-        credentials: "same-origin"
+    function uploadOneFile(file, currentIndex, totalCount, statusText) {
+        return new Promise(async (resolve) => {
+            try {
+                if (!aesKeyBytes) {
+                    statusText.innerText = "보안 연결이 끊어졌습니다. 다시 인증해주세요.";
+                    resetAuth();
+                    return resolve(false);
+                }
+
+                statusText.innerText = `전송 준비 및 암호화 중... (${currentIndex}/${totalCount}) ${file.name}`;
+
+                const metaCrypto = await encryptFileName(file.name);
+
+                // 1. PC 메모리에서 통짜 암호화 수행
+                const encryptedFile = await encryptFile(file);
+
+                const xhr = new XMLHttpRequest();
+                xhr.open("POST", "/upload", true); // URL 파라미터 다 뺍니다.
+                xhr.withCredentials = true;
+
+                // 💡 2. 코틀린 서버가 읽을 수 있도록 메타데이터를 HTTP 헤더에 쌩으로 실어줍니다.
+                xhr.setRequestHeader("Content-Type", "application/octet-stream"); // 멀티파트 아님!
+                xhr.setRequestHeader("X-File-Name-Encrypted", metaCrypto.encryptedBase64);
+                xhr.setRequestHeader("X-Meta-Nonce", metaCrypto.metaNonceBase64);
+                xhr.setRequestHeader("X-FocusWave-Nonce", encryptedFile.nonceBase64);
+
+                xhr.upload.onprogress = function (event) {
+                    if (event.lengthComputable) {
+                        const percent = Math.round((event.loaded / event.total) * 100);
+                        statusText.innerText = `전송 중... (${currentIndex}/${totalCount}) ${file.name} - ${percent}%`;
+                    }
+                };
+
+                xhr.onload = function () {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        statusText.innerText = `전송 완료! (${currentIndex}/${totalCount}) ${file.name}`;
+                        resolve(true);
+                    } else {
+                        statusText.innerText = `전송 실패: 서버 에러 (${xhr.status})`;
+                        resolve(false);
+                    }
+                };
+
+                xhr.onerror = function () {
+                    statusText.innerText = `서버 연결 실패`;
+                    resolve(false);
+                };
+
+                // 💡 FormData로 감싸지 않고 암호화된 순수 덩어리(Blob)만 네트워크로 밀어 넣습니다.
+                xhr.send(encryptedFile.encryptedBlob);
+
+            } catch (error) {
+                statusText.innerText = `암호화 또는 전송 실패`;
+                resolve(false);
+            }
+        });
+    }
+
+    function toggleSelectAll() {
+        const selectAllCheckbox = document.getElementById('selectAll');
+        const checkboxes = document.querySelectorAll('.file-checkbox');
+
+        checkboxes.forEach(cb => {
+            cb.checked = selectAllCheckbox.checked;
+        });
+    }
+
+    function downloadSelected() {
+        if (!isAuthenticated) {
+            alert("먼저 인증 코드를 입력해주세요.");
+            return;
+        }
+
+        const checkboxes = document.querySelectorAll('.file-checkbox:checked');
+
+        if (checkboxes.length === 0) {
+            alert("다운로드할 파일을 체크해주세요!");
+            return;
+        }
+
+        checkboxes.forEach((cb, index) => {
+            setTimeout(() => {
+                downloadEncryptedFile(cb.value);
+            }, index * 300);
+        });
+    }
+
+    async function fetchFileList() {
+        if (!isAuthenticated) return;
+
+        const listElement = document.getElementById('fileList');
+        const selectAllCheckbox = document.getElementById('selectAll');
+
+        try {
+            const response = await fetch('/list', { credentials: 'same-origin' });
+
+            if (response.ok) {
+                const files = await response.json();
+
+                const checkedFiles = Array.from(document.querySelectorAll('.file-checkbox:checked')).map(cb => cb.value);
+                const isSelectAllchecked = selectAllCheckbox ? selectAllCheckbox.checked : false;
+
+                listElement.innerHTML = "";
+
+                if (selectAllCheckbox) selectAllCheckbox.checked = isSelectAllchecked;
+
+                if (files.length === 0) {
+                    listElement.innerHTML = "<li>폰에 공유 중인 파일이 없습니다.</li>";
+                    return;
+                }
+
+                files.slice().reverse().forEach(fileName => {
+                    const li = document.createElement('li');
+                    const label = document.createElement('label');
+                    label.className = "checkbox-label";
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = "checkbox";
+                    checkbox.className = "file-checkbox";
+                    checkbox.value = fileName;
+
+                    if (checkedFiles.includes(fileName)) {
+                        checkbox.checked = true;
+                    }
+
+                    const fileNameText = document.createElement('span');
+                    fileNameText.className = "file-name";
+                    fileNameText.textContent = fileName;
+
+                    label.appendChild(checkbox);
+                    label.appendChild(fileNameText);
+
+                    const downloadBtn = document.createElement('a');
+                    downloadBtn.href = "#";
+                    downloadBtn.textContent = "다운로드 ⬇️";
+                    downloadBtn.className = "file-download";
+
+                    downloadBtn.setAttribute('data-filename', fileName);
+                    const state = downloadState[fileName];
+                    if (state) {
+                        downloadBtn.textContent = state.text;
+                        downloadBtn.style.color = state.color;
+                        downloadBtn.style.pointerEvents = state.disabled ? "none" : "auto";
+                    }
+
+                    downloadBtn.onclick = function (event) {
+                        event.preventDefault();
+                        downloadEncryptedFile(fileName);
+                    };
+
+                    li.appendChild(label);
+                    li.appendChild(downloadBtn);
+                    listElement.appendChild(li);
+                });
+            } else if (response.status === 401 || response.status === 403) {
+                listElement.innerHTML = "<li>인증이 만료되었거나 권한이 없습니다.</li>";
+                resetAuth();
+            } else {
+                listElement.innerHTML = "<li>파일 목록을 가져오지 못했습니다.</li>";
+            }
+        } catch (error) {
+            listElement.innerHTML = "<li>서버(폰)에서 목록을 가져올 수 없습니다.</li>";
+        }
+    }
+
+    async function checkConnection() {
+        const statusElement = document.getElementById('connectionStatus');
+        const ipAddress = window.location.hostname || "로컬";
+
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 2000);
+            const response = await fetch('/ping', { signal: controller.signal });
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+                statusElement.innerHTML = `🟢 폰(${ipAddress})과 정상적으로 연결됨`;
+                statusElement.style.color = "#4CAF50";
+            } else {
+                throw new Error("서버 응답 오류");
+            }
+        } catch (error) {
+            statusElement.innerHTML = `🔴 폰(${ipAddress})과 연결이 끊어졌습니다!`;
+            statusElement.style.color = "#F44336";
+        }
+    }
+
+    function resetAuth() {
+        isAuthenticated = false;
+        clientPrivateKey = null;
+        clientPublicKey = null;
+        aesKeyBytes = null;
+
+        if (fileListRefreshTimer !== null) {
+            clearInterval(fileListRefreshTimer);
+            fileListRefreshTimer = null;
+        }
+        clearFileShareUi();
+
+        document.getElementById('authCard').style.display = "block";
+        document.getElementById('fileShareContainer').style.display = "none";
+        document.getElementById('authCodeInput').value = "";
+        document.getElementById('authStatus').innerText = "다시 인증해주세요.";
+    }
+
+    function clearFileShareUi() {
+        const fileInput = document.getElementById('fileInput');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const fileList = document.getElementById('fileList');
+        const selectAllCheckbox = document.getElementById('selectAll');
+
+        if (fileInput) fileInput.value = "";
+        if (uploadStatus) uploadStatus.innerText = "";
+        if (selectAllCheckbox) selectAllCheckbox.checked = false;
+
+        if (fileList) {
+            fileList.innerHTML = "<li>아직 불러온 파일이 없습니다.</li>";
+        }
+    }
+
+    document.getElementById('authCodeInput').addEventListener('keyup', function (event) {
+        if (event.key === "Enter") {
+            verifyCode();
+        }
     });
 
-    if (!response.ok) {
-        alert(`다운로드 실패: ${response.status}`);
-        return;
-    }
+    window.verifyCode = verifyCode;
+    window.uploadFile = uploadFile;
+    window.toggleSelectAll = toggleSelectAll;
+    window.downloadSelected = downloadSelected;
+    window.downloadEncryptedFile = downloadEncryptedFile;
+    checkConnection();
+    setInterval(checkConnection, 3000);
 
-    const nonceBase64 = response.headers.get("X-FocusWave-Nonce");
-    if (!nonceBase64) {
-        alert("다운로드 복호화 정보가 없습니다.");
-        return;
-    }
+    // --- 드래그 앤 드롭 영역 이벤트 처리 ---
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const uploadStatus = document.getElementById('uploadStatus');
 
-    const iv = base64ToBytes(nonceBase64);
-    const arrayBuffer = await response.arrayBuffer();
-    const encryptedBytes = new Uint8Array(arrayBuffer);
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
 
-    console.log("--- [다운로드 수신 완료] ---");
-    console.log(`파일명: ${fileName}`);
-    console.log(`수신된 암호화 데이터 크기: ${encryptedBytes.byteLength} bytes`);
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+    });
 
-    try {
-        const aes = cbc(aesKeyBytes, iv);
-        const paddedPlainBytes = aes.decrypt(encryptedBytes);
-        console.log(`복호화 성공. 패딩 포함 크기: ${paddedPlainBytes.byteLength} bytes`);
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
 
-        // 마지막 바이트가 패딩 값이므로 확인
-        const padValue = paddedPlainBytes[paddedPlainBytes.length - 1];
-        console.log(`추출된 패딩 값 (마지막 바이트): ${padValue}`);
-
-        // 데이터가 깨진 경우 마지막 16바이트(1블록)가 어떻게 생겼는지 확인
-        console.log("마지막 16바이트 헥사 덤프:",
-            Array.from(paddedPlainBytes.slice(-16))
-                 .map(b => b.toString(16).padStart(2, '0')).join(' ')
-        );
-
-
-
-        //const plainBytes = pkcs7Unpad(paddedPlainBytes);
-        const plainBytes = paddedPlainBytes;
-        console.log(`언패딩 성공. 최종 평문 크기: ${plainBytes.byteLength} bytes`);
-
-        const blob = new Blob([plainBytes], {
-            type: response.headers.get("Content-Type") || "application/octet-stream"
-        });
-
-        // 다운로드 트리거 로직...
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-    } catch (error) {
-        console.error("복호화 또는 패딩 제거 중 에러 발생:", error);
-    }
-}
-
-        async function verifyCode() {
-            const codeInput = document.getElementById('authCodeInput');
-            const authStatus = document.getElementById('authStatus');
-            const authCard = document.getElementById('authCard');
-            const fileShareContainer = document.getElementById('fileShareContainer');
-            const code = codeInput.value.trim();
-
-            if (code.length !== 6) {
-                authStatus.innerText = "6자리 인증 코드를 입력해주세요.";
-                return;
-            }
-
-            authStatus.innerText = "인증 중...";
-
-            try {
-                const response = await fetch('/auth', {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ code: code })
-                });
-
-                if (response.ok) {
-                    authStatus.innerText = "보안 연결 설정 중...";
-                    await setupEncryption();
-
-                    isAuthenticated = true;
-                    clearFileShareUi();
-                    authCard.style.display = "none";
-                    fileShareContainer.style.display = "flex";
-
-                    fetchFileList();
-
-                    if (fileListRefreshTimer !== null) {
-                        clearInterval(fileListRefreshTimer);
-                    }
-
-                    fileListRefreshTimer = setInterval(() => {
-                        fetchFileList();
-                    }, 2000);
-
-                } else {
-                    let errorData;
-                    try {
-                        errorData = await response.json();
-                    } catch (e) {
-                        errorData = null;
-                    }
-
-                    if (errorData && errorData.message) {
-                        authStatus.innerText = errorData.message;
-                    } else {
-                        if (response.status === 401) {
-                            authStatus.innerText = "인증 코드가 올바르지 않습니다.";
-                        } else if (response.status === 403) {
-                            authStatus.innerText = "영구 차단됨: 서버가 재시작될 때까지 접속할 수 없습니다.";
-                        } else if (response.status === 429) {
-                            authStatus.innerText = "요청 횟수 초과: 1분 뒤에 다시 시도해주세요.";
-                        } else {
-                            authStatus.innerText = `인증 실패: 서버 에러 (${response.status})`;
-                        }
-                    }
-                }
-            } catch (error) {
-                authStatus.innerText = "서버(폰)에 연결할 수 없습니다. Wi-Fi 상태를 확인해 주세요.";
-            }
+        if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            fileInput.files = e.dataTransfer.files;
+            uploadStatus.innerText = `✅ ${fileInput.files.length}개의 파일이 선택되었습니다. 전송을 눌러주세요!`;
+            uploadStatus.style.color = "#4CAF50"; // 초록색으로 변경
         }
+    });
 
-        async function uploadFile() {
-            if (!isAuthenticated) {
-                alert("먼저 인증 코드를 입력해주세요.");
-                return;
-            }
-
-            const fileInput = document.getElementById('fileInput');
-            const statusText = document.getElementById('uploadStatus');
-            const files = Array.from(fileInput.files);
-
-            if (files.length === 0) {
-                alert("파일을 먼저 선택해주세요!");
-                return;
-            }
-
-            let successCount = 0;
-
-            for (let i = 0; i < files.length; i++) {
-                const file = files[i];
-                const success = await uploadOneFile(file, i + 1, files.length, statusText);
-                if (!success) return;
-                successCount++;
-            }
-
-            statusText.innerText = `${successCount}개 파일 전송 성공!`;
-            fileInput.value = "";
-            fetchFileList();
+    // 클릭해서 파일을 선택했을 때도 피드백을 주기 위한 이벤트
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            uploadStatus.innerText = `✅ ${fileInput.files.length}개의 파일이 선택되었습니다. 전송을 눌러주세요!`;
+            uploadStatus.style.color = "#4CAF50";
         }
-
-        function uploadOneFile(file, currentIndex, totalCount, statusText) {
-            return new Promise(async (resolve) => {
-                try {
-                    if (!aesKeyBytes) {
-                        statusText.innerText = "보안 연결이 끊어졌습니다. 다시 인증해주세요.";
-                        resetAuth();
-                        return resolve(false);
-                    }
-
-                    statusText.innerText = `전송 준비 및 암호화 중... (${currentIndex}/${totalCount}) ${file.name} (화면이 멈출 수 있습니다)`;
-
-                    // 전송 전 암호화 수행
-                    const encryptedFile = await encryptFile(file);
-
-                    const formData = new FormData();
-                    formData.append("files", encryptedFile.encryptedBlob, file.name + ".enc");
-                    formData.append("fileName_0", file.name);
-                    formData.append("nonce", encryptedFile.nonceBase64);
-                    formData.append("encrypted", "true");
-
-                    const xhr = new XMLHttpRequest();
-                    xhr.open("POST", `/upload?fileName=${encodeURIComponent(file.name)}`, true);
-                    xhr.withCredentials = true;
-
-                    xhr.upload.onprogress = function (event) {
-                        if (event.lengthComputable) {
-                            const percent = Math.round((event.loaded / event.total) * 100);
-                            statusText.innerText = `전송 중... (${currentIndex}/${totalCount}) ${file.name} - ${percent}%`;
-                        } else {
-                            statusText.innerText = `전송 중... (${currentIndex}/${totalCount}) ${file.name}`;
-                        }
-                    };
-
-                    xhr.onload = function () {
-                        if (xhr.status >= 200 && xhr.status < 300) {
-                            statusText.innerText = `전송 완료... (${currentIndex}/${totalCount}) ${file.name}`;
-                            resolve(true);
-                        } else if (xhr.status === 401 || xhr.status === 403) {
-                            statusText.innerText = "인증이 만료되었거나 권한이 없습니다.";
-                            resetAuth();
-                            resolve(false);
-                        } else {
-                            statusText.innerText = `전송 실패: 서버 에러 (${xhr.status}) - ${file.name}`;
-                            resolve(false);
-                        }
-                    };
-
-                    xhr.onerror = function () {
-                        statusText.innerText = `서버에 연결할 수 없습니다. - ${file.name}`;
-                        resolve(false);
-                    };
-
-                    xhr.send(formData);
-
-                } catch (error) {
-                    statusText.innerText = `암호화 또는 전송 실패 - ${file.name}`;
-                    resolve(false);
-                }
-            });
-        }
-
-        function toggleSelectAll() {
-            const selectAllCheckbox = document.getElementById('selectAll');
-            const checkboxes = document.querySelectorAll('.file-checkbox');
-
-            checkboxes.forEach(cb => {
-                cb.checked = selectAllCheckbox.checked;
-            });
-        }
-
-        function downloadSelected() {
-            if (!isAuthenticated) {
-                alert("먼저 인증 코드를 입력해주세요.");
-                return;
-            }
-
-            const checkboxes = document.querySelectorAll('.file-checkbox:checked');
-
-            if (checkboxes.length === 0) {
-                alert("다운로드할 파일을 체크해주세요!");
-                return;
-            }
-
-            checkboxes.forEach((cb, index) => {
-                setTimeout(() => {
-                   downloadEncryptedFile(cb.value);
-                }, index * 300);
-            });
-        }
-
-        async function fetchFileList() {
-            if (!isAuthenticated) return;
-
-            const listElement = document.getElementById('fileList');
-            const selectAllCheckbox = document.getElementById('selectAll');
-
-            try {
-                const response = await fetch('/list', { credentials: 'same-origin' });
-
-                if (response.ok) {
-                    const files = await response.json();
-                    listElement.innerHTML = "";
-
-                    if (selectAllCheckbox) selectAllCheckbox.checked = false;
-
-                    if (files.length === 0) {
-                        listElement.innerHTML = "<li>폰에 공유 중인 파일이 없습니다.</li>";
-                        return;
-                    }
-
-                    files.slice().reverse().forEach(fileName => {
-                        const li = document.createElement('li');
-                        const label = document.createElement('label');
-                        label.className = "checkbox-label";
-
-                        const checkbox = document.createElement('input');
-                        checkbox.type = "checkbox";
-                        checkbox.className = "file-checkbox";
-                        checkbox.value = fileName;
-
-                        const fileNameText = document.createElement('span');
-                        fileNameText.className = "file-name";
-                        fileNameText.textContent = fileName;
-
-                        label.appendChild(checkbox);
-                        label.appendChild(fileNameText);
-
-                        const downloadBtn = document.createElement('a');
-                        downloadBtn.href = "#";
-                        downloadBtn.textContent = "다운로드 ⬇️";
-                        downloadBtn.className = "file-download";
-
-                        downloadBtn.onclick = function (event) {
-                             event.preventDefault();
-                               downloadEncryptedFile(fileName);
-                        };
-
-                        li.appendChild(label);
-                        li.appendChild(downloadBtn);
-                        listElement.appendChild(li);
-                    });
-                } else if (response.status === 401 || response.status === 403) {
-                    listElement.innerHTML = "<li>인증이 만료되었거나 권한이 없습니다.</li>";
-                    resetAuth();
-                } else {
-                    listElement.innerHTML = "<li>파일 목록을 가져오지 못했습니다.</li>";
-                }
-            } catch (error) {
-                listElement.innerHTML = "<li>서버(폰)에서 목록을 가져올 수 없습니다.</li>";
-            }
-        }
-
-        async function checkConnection() {
-            const statusElement = document.getElementById('connectionStatus');
-            const ipAddress = window.location.hostname || "로컬";
-
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 2000);
-                const response = await fetch('/ping', { signal: controller.signal });
-                clearTimeout(timeoutId);
-
-                if (response.ok) {
-                    statusElement.innerHTML = `🟢 폰(${ipAddress})과 정상적으로 연결됨`;
-                    statusElement.style.color = "#4CAF50";
-                } else {
-                    throw new Error("서버 응답 오류");
-                }
-            } catch (error) {
-                statusElement.innerHTML = `🔴 폰(${ipAddress})과 연결이 끊어졌습니다!`;
-                statusElement.style.color = "#F44336";
-            }
-        }
-
-        function resetAuth() {
-            isAuthenticated = false;
-            clientPrivateKey = null;
-            clientPublicKey = null;
-            aesKeyBytes = null;
-
-            if (fileListRefreshTimer !== null) {
-                clearInterval(fileListRefreshTimer);
-                fileListRefreshTimer = null;
-            }
-            clearFileShareUi();
-
-            document.getElementById('authCard').style.display = "block";
-            document.getElementById('fileShareContainer').style.display = "none";
-            document.getElementById('authCodeInput').value = "";
-            document.getElementById('authStatus').innerText = "다시 인증해주세요.";
-        }
-
-        function clearFileShareUi() {
-            const fileInput = document.getElementById('fileInput');
-            const uploadStatus = document.getElementById('uploadStatus');
-            const fileList = document.getElementById('fileList');
-            const selectAllCheckbox = document.getElementById('selectAll');
-
-            if (fileInput) fileInput.value = "";
-            if (uploadStatus) uploadStatus.innerText = "";
-            if (selectAllCheckbox) selectAllCheckbox.checked = false;
-
-            if (fileList) {
-                fileList.innerHTML = "<li>아직 불러온 파일이 없습니다.</li>";
-            }
-        }
-
-        document.getElementById('authCodeInput').addEventListener('keyup', function (event) {
-            if (event.key === "Enter") {
-                verifyCode();
-            }
-        });
-
-        window.verifyCode = verifyCode;
-        window.uploadFile = uploadFile;
-        window.toggleSelectAll = toggleSelectAll;
-        window.downloadSelected = downloadSelected;
-        window.downloadEncryptedFile = downloadEncryptedFile;
-        checkConnection();
-        setInterval(checkConnection, 3000);
+    });
+    // ------------------------------------
 </script>
 </body>
 </html>

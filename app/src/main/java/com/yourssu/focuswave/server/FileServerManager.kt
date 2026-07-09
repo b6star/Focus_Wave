@@ -113,7 +113,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             } ?: emptyList()
     }
 
-    // 폰 내부 파일을 웹 서버 shared_files 에 복사
+    // 폰 내부 파일을 서버 shared_files 에 복사
     fun shareFiles(
         files: List<SharedFileUi>,
         onProgress: (fileId: String, percent: Int) -> Unit
@@ -303,14 +303,9 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     private fun clearFileShareRecords() {
         val appFilesDir = getApplication<Application>().filesDir
 
-        listOf(
-            LocalFileServer.RECEIVED_DIRECTORY_NAME,
-            LocalFileServer.SHARED_DIRECTORY_NAME
-        ).forEach { directoryName ->
-            File(appFilesDir, directoryName)
-                .takeIf { it.exists() }
-                ?.deleteRecursively()
-        }
+        File(appFilesDir,  LocalFileServer.SHARED_DIRECTORY_NAME)
+            .takeIf { it.exists() }
+            ?.deleteRecursively()
     }
 
     companion object {

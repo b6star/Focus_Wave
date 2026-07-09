@@ -7,6 +7,9 @@ import fi.iki.elonen.NanoHTTPD
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
+import java.io.InputStream
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.net.URLConnection
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -39,6 +42,7 @@ class LocalFileServer(
         var blockedUntilMillis: Long = 0L,
         var banned: Boolean = false
     )
+
 
     override fun stop() {
         activeTokens.clear()
@@ -114,6 +118,13 @@ class LocalFileServer(
         val attempt = authAttempts.getOrPut(clientIp) { AuthAttempt() }
         val now = System.currentTimeMillis()
 
+        val userAgent = session.headers["user-agent"] ?: "Unknown Device"
+        Log.d("Session Debug", "client ip: ${clientIp}")
+        Log.d("Session Debug", "Host Name: ${getDeviceFriendlyName(userAgent)}")
+        Log.d("Session Debug", "userAgent: ${userAgent}")
+
+
+
         if (attempt.banned) {
             return  jsonError(Response.Status.FORBIDDEN, "This IP is blocked until server restart")
         }
@@ -171,6 +182,37 @@ class LocalFileServer(
                 "$TOKEN_COOKIE_NAME=$token; Path=/; HttpOnly; SameSite=Strict"
             )
         }
+    }
+
+    fun getDeviceFriendlyName(userAgent: String?): String {
+        if (userAgent.isNullOrBlank()) return "Unknown Device"
+
+        // 1. 운영체제(OS) 추출
+        val os = when {
+            userAgent.contains("Windows", ignoreCase = true) -> "Windows"
+            userAgent.contains("iPhone", ignoreCase = true) -> "iPhone"
+            userAgent.contains("iPad", ignoreCase = true) -> "iPad"
+            userAgent.contains("Mac OS", ignoreCase = true) ||
+                    userAgent.contains("Macintosh", ignoreCase = true) -> "Mac"
+            userAgent.contains("Android", ignoreCase = true) -> "Android"
+            userAgent.contains("Linux", ignoreCase = true) -> "Linux"
+            else -> "Unknown OS"
+        }
+
+        // 2. 브라우저 추출 (🚨 순서가 매우 중요합니다!)
+        val browser = when {
+            userAgent.contains("Edg", ignoreCase = true) -> "Edge"
+            userAgent.contains("Whale", ignoreCase = true) -> "Whale" // 한국 환경 고려 (네이버 웨일)
+            userAgent.contains("SamsungBrowser", ignoreCase = true) -> "Samsung Internet"
+            userAgent.contains("Chrome", ignoreCase = true) ||
+                    userAgent.contains("CriOS", ignoreCase = true) -> "Chrome"
+            userAgent.contains("Firefox", ignoreCase = true) ||
+                    userAgent.contains("FxiOS", ignoreCase = true) -> "Firefox"
+            userAgent.contains("Safari", ignoreCase = true) -> "Safari"
+            else -> "Unknown Browser"
+        }
+
+        return "$os $browser"
     }
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
@@ -322,9 +364,32 @@ class LocalFileServer(
         disposition: String,
         action: String
     ): Response {
-        val requestedName = session.uri.removePrefix(routePrefix)
-        val safeName = sanitizeFileName(requestedName)
-        if (safeName == null || safeName != requestedName) {
+
+        val encryptedFileBase64 = session.uri.removePrefix(routePrefix)
+
+        val params = session.parameters
+        val metaNonceBase64 = params["nonce"]?.firstOrNull()
+        if (encryptedFileBase64.isEmpty() || metaNonceBase64.isNullOrEmpty()) {
+            return jsonError(Response.Status.BAD_REQUEST, "Missing cryptographic parameters for File Name")
+        }
+
+        //암호화 키 가져오기
+        val token =
+            getRequestToken(session)
+                ?: return unauthorizedResponse()
+
+        val aesKey =
+            clientAesKeys[token]
+                ?: return jsonError(Response.Status.UNAUTHORIZED, "Encryption key is missing")
+
+        val actualFileName = try {
+            FileShareCrypto.decryptAesCbcString(encryptedFileBase64, Base64.getDecoder().decode(metaNonceBase64), aesKey)
+        } catch (e: Exception) {
+            return jsonError(Response.Status.BAD_REQUEST, "Invalid encrypted file name")
+        }
+
+        val safeName = sanitizeFileName(actualFileName)
+        if (safeName == null || safeName != actualFileName) {
             return jsonError(Response.Status.BAD_REQUEST, "Invalid file name")
         }
 
@@ -339,23 +404,21 @@ class LocalFileServer(
             }
 
             logDebug("$action requested: name=${file.name}")
-            val mimeType = URLConnection.guessContentTypeFromName(file.name)
-                ?: "application/octet-stream"
-            val encodedName = URLEncoder.encode(file.name, StandardCharsets.UTF_8.name())
-                .replace("+", "%20")
 
+            // val mimeType = URLConnection.guessContentTypeFromName(file.name) ?: "application/octet-stream"
+            val dummyMimeType = "application/octet-stream"
 
-            //암호화
-            val token =
-                getRequestToken(session)
-                    ?: return unauthorizedResponse()
-
-            val aesKey =
-                clientAesKeys[token]
-                    ?: return jsonError(Response.Status.UNAUTHORIZED, "Encryption key is missing")
 
             val nonceBytes = ByteArray(16)
             secureRandom.nextBytes(nonceBytes)
+
+            val metaNonceBytes = ByteArray(16)
+            secureRandom.nextBytes(metaNonceBytes)
+            val encryptedFileNameBase64 = FileShareCrypto.encryptAesCbcStringWith256Padding(file.name, metaNonceBytes, aesKey)
+            val metaNonceBase64 = Base64.getEncoder().encodeToString(metaNonceBytes)
+
+            val originalSize = file.length()
+            val expectedEncryptedSize = (originalSize / 16) * 16 + 16
 
             val encryptedStream = FileShareCrypto.encryptAesCbcStream(
                 plainInputStream = FileInputStream(file),
@@ -363,18 +426,21 @@ class LocalFileServer(
                 aesKey = aesKey
             )
 
+
             newFixedLengthResponse(
                 Response.Status.OK,
-                mimeType,
+                dummyMimeType,
                 encryptedStream,
-                -1L // 길이를 -1L로 주면 NanoHTTPD가 Content-Length 대신 Chunked 방식으로 끝까지 밀어줌
+                expectedEncryptedSize
             ).apply {
                 addHeader(
                     "Content-Disposition",
-                    "$disposition; filename*=UTF-8''$encodedName"
+                    "attachment; filename=\"encrypted_data.bin\""
                 )
                 addHeader("X-FocusWave-Encrypted", "true")
                 addHeader("X-FocusWave-Nonce", Base64.getEncoder().encodeToString(nonceBytes))
+                addHeader("X-File-Name-Encrypted", encryptedFileNameBase64)
+                addHeader("X-Meta-Nonce", metaNonceBase64)
             }
 
 
@@ -385,98 +451,81 @@ class LocalFileServer(
     }
 
     private fun handleUpload(session: IHTTPSession): Response {
-        logDebug("upload request received")
-        val contentType = session.headers["content-type"].orEmpty()
-        val mediaType = contentType.substringBefore(';').trim()
-        if (!mediaType.equals("multipart/form-data", ignoreCase = true)) {
-            return uploadError(Response.Status.BAD_REQUEST, "Content-Type must be multipart/form-data")
-        }
+        logDebug("upload request received (On-the-fly 실시간 스트림 모드)")
+        val encryptedFileNameBase64 = session.headers["x-file-name-encrypted"]
+        val metadataNonceBase64 = session.headers["x-meta-nonce"]
+        val fileNonceBase64 = session.headers["x-focuswave-nonce"]
 
+        // 💡 PC가 보내는 원본 파일의 정확한 바이트 크기를 가져옵니다.
         val contentLength = session.headers["content-length"]?.toLongOrNull()
 
-        if (contentLength != null && contentLength > MAX_REQUEST_SIZE_BYTES) {
-            return uploadError(Response.Status.PAYLOAD_TOO_LARGE, "File is too large")
+
+        if (
+            fileNonceBase64.isNullOrBlank() ||
+            encryptedFileNameBase64.isNullOrBlank() ||
+            metadataNonceBase64.isNullOrBlank()
+            ) {
+            return uploadError(Response.Status.BAD_REQUEST, "필수 헤더가 누락되었습니다.")
         }
 
-        val uploadedParts = mutableMapOf<String, String>()
-        try {
-            session.parseBody(uploadedParts)
-        } catch (error: Exception) {
-            return uploadError(
-                Response.Status.BAD_REQUEST,
-                error.localizedMessage ?: "Invalid multipart request"
+        if (contentLength == null || contentLength <= 0) {
+            return uploadError(Response.Status.BAD_REQUEST, "Content-Length를 알 수 없습니다.")
+        }
+
+
+        val token = getRequestToken(session) ?: return unauthorizedResponse()
+        val aesKey = clientAesKeys[token] ?: return uploadError(Response.Status.UNAUTHORIZED, "암호화 키가 없습니다.")
+
+        val rawFileName = try{
+            val metaNonceBytes = Base64.getDecoder().decode(metadataNonceBase64)
+
+            FileShareCrypto.decryptAesCbcString(
+                encryptedFileNameBase64,
+                metaNonceBytes,
+                aesKey
             )
+        } catch (error: Exception) {
+            logDebug("파일명 복호화 실패: ${error.message}")
+            return uploadError(Response.Status.BAD_REQUEST, "파일명 복호화에 실패했습니다.")
         }
-
-        val uploadFieldName = UPLOAD_FIELD_NAMES.firstOrNull { fieldName ->
-            !session.parms[fieldName].isNullOrBlank() && !uploadedParts[fieldName].isNullOrBlank()
-        }
-        val rawFileName = session.parameters["fileName"]?.firstOrNull()
-            ?: session.parms["fileName"]
-            ?: uploadFieldName?.let(session.parms::get)
-        val temporaryPath = uploadFieldName?.let(uploadedParts::get)
-        if (rawFileName.isNullOrBlank() || temporaryPath.isNullOrBlank()) {
-            return uploadError(Response.Status.BAD_REQUEST, "File field is required")
-        }
-        val nonceBase64 = session.parms["nonce"]
-            ?: return uploadError(Response.Status.BAD_REQUEST, "Nonce is required")
-
-        val nonceBytes = try {
-            Base64.getDecoder().decode(nonceBase64)
-        } catch (_: Exception) {
-            return uploadError(Response.Status.BAD_REQUEST, "Invalid nonce")
-        }
-
 
         val safeFileName = sanitizeFileName(rawFileName)
-            ?: return uploadError(Response.Status.BAD_REQUEST, "File name is empty")
-        val temporaryFile = File(temporaryPath)
-        if (!temporaryFile.isFile) {
-            return uploadError(Response.Status.BAD_REQUEST, "Uploaded file is invalid")
+            ?: return uploadError(Response.Status.BAD_REQUEST, "파일명이 비어있습니다.")
+
+        val fileNonceBytes = try {
+            Base64.getDecoder().decode(fileNonceBase64)
+        } catch (_: Exception) {
+            return uploadError(Response.Status.BAD_REQUEST, "올바르지 않은 nonce 형식입니다.")
         }
 
-        if (temporaryFile.length() > MAX_FILE_SIZE_BYTES) {
-            return uploadError(Response.Status.PAYLOAD_TOO_LARGE, "File is too large")
-        }
-
-
-        val token =
-            getRequestToken(session)
-                ?: return unauthorizedResponse()
-
-        val aesKey =
-            clientAesKeys[token]
-                ?: return uploadError(Response.Status.UNAUTHORIZED, "Encryption key is missing")
-
-        logDebug("upload received: name=$safeFileName, size=${temporaryFile.length()}")
         return try {
+            // contentLength 크기만큼만 읽고 종료하는 스트림
+            val boundedStream = BoundedInputStream(session.inputStream, contentLength)
+
             val storedFile = saveUploadedFileStream(
-                temporaryFile = temporaryFile,
+                networkInputStream = boundedStream, // 안전하게 씌워진 스트림을 넘김
                 safeFileName = safeFileName,
-                nonceBytes = nonceBytes,
+                nonceBytes = fileNonceBytes,
                 aesKey = aesKey
             )
 
-            logDebug(
-                "upload saved: path=${storedFile.absolutePath}, " +
-                        "exists=${storedFile.exists()}, size=${storedFile.length()}"
-            )
+            logDebug("upload saved on-the-fly: path=${storedFile.absolutePath}, size=${storedFile.length()}")
             notifyFilesChanged()
             jsonResponse(
                 Response.Status.OK,
                 """{"success":true,"fileName":${jsonString(storedFile.name)},"size":${storedFile.length()}}"""
             )
-        } catch (error: Exception) { // IOException 외의 암호화 에러도 잡기 위해 Exception으로 넓힘
+        } catch (error: Exception) {
             logDebug("upload save failed: reason=${error.message}")
             uploadError(
                 Response.Status.INTERNAL_ERROR,
-                "Failed to save file"
+                "파일 저장 실패: ${error.message}"
             )
         }
     }
 
     private fun saveUploadedFileStream(
-        temporaryFile: File,
+        networkInputStream: InputStream,
         safeFileName: String,
         nonceBytes: ByteArray,
         aesKey: SecretKey
@@ -488,28 +537,38 @@ class LocalFileServer(
             throw IOException("Invalid file path")
         }
 
+        // 쓰기가 완전히 끝나기 전까지 UI 리스트에 노출되어 깨지는 것을 막기 위해 여전히 .tmp 확장자를 씁니다.
+        val tempDestination = File(directory, "${destination.name}.tmp")
+
         try {
-            // 임시 파일(암호화 상태)을 읽어오는 스트림
-            temporaryFile.inputStream().use { encryptedInput ->
-                // 최종 저장 파일에 쓰는 스트림
-                destination.outputStream().use { decryptedOutput ->
-                    // FileShareCrypto의 CTR 스트림 복호화 호출
+            //  256KB 대용량 버퍼를 네트워크 스트림과 디스크 출력 스트림 양쪽에 씌웁니다.
+            networkInputStream.buffered(256 * 1024).use { bufferedNetworkInput ->
+                tempDestination.outputStream().buffered(256 * 1024).use { decryptedOutput ->
+
+                    // 🚀 임시 파일 경유 없이, 와이파이 스트림을 받자마자 바로 복호화해서 디스크에 때려 박습니다.
                     FileShareCrypto.decryptAesCbcStream(
-                        encryptedInputStream = encryptedInput,
+                        encryptedInputStream = bufferedNetworkInput,
                         decryptedOutputStream = decryptedOutput,
                         nonceBytes = nonceBytes,
                         aesKey = aesKey
                     )
                 }
-            }
+            } // 이 블록을 빠져나오는 순간 네트워크 소켓과 파일이 완벽히 close() 됩니다.
 
-            if (!destination.isFile) {
+            if (!tempDestination.isFile) {
                 throw IOException("Stored file verification failed")
             }
+
+            //  디스크에 실시간 복호화 쓰기가 끝나자마자 원본 이름으로 교체
+            if (!tempDestination.renameTo(destination)) {
+                throw IOException("Failed to rename temp file to final destination")
+            }
+
             destination
         } catch (error: Exception) {
-            destination.delete() // 실패하면 찌꺼기 파일 삭제
-            throw IOException("Stream decryption failed: ${error.message}", error)
+            tempDestination.delete()
+            destination.delete()
+            throw IOException("실시간 스트림 복호화 실패: ${error.message}", error)
         }
     }
 
@@ -722,7 +781,6 @@ class LocalFileServer(
         private const val DOWNLOAD_ROUTE_PREFIX = "/download/"
         private const val PREVIEW_ROUTE_PREFIX = "/preview/"
         private val UPLOAD_FIELD_NAMES = listOf("file", "files")
-        internal const val RECEIVED_DIRECTORY_NAME = "received_files"
         internal const val SHARED_DIRECTORY_NAME = "shared_files"
 
         internal fun sharedDirectory(appFilesDirectory: File): File =
@@ -786,5 +844,33 @@ class LocalFileServer(
             </body>
             </html>
         """.trimIndent()
+    }
+}
+
+
+//  무한 대기(Deadlock) 방지용: 지정된 크기만큼만 데이터를 읽고 끊어버리는 스트림
+private class BoundedInputStream(
+    private val inStream: java.io.InputStream,
+    private val limit: Long
+) : java.io.InputStream() {
+    private var left: Long = limit
+
+    override fun read(): Int {
+        if (left <= 0) return -1
+        val result = inStream.read()
+        if (result != -1) left--
+        return result
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        if (left <= 0) return -1
+        val bytesToRead = minOf(len.toLong(), left).toInt()
+        val result = inStream.read(b, off, bytesToRead)
+        if (result != -1) left -= result
+        return result
+    }
+
+    override fun close() {
+        // inStream.close()
     }
 }

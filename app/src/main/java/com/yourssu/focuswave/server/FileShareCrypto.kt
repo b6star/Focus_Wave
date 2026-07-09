@@ -23,7 +23,8 @@ class SafeCipherInputStream(
     private val source: java.io.InputStream,
     private val cipher: javax.crypto.Cipher
 ) : java.io.InputStream() {
-    private val buffer = ByteArray(8192)
+
+    private val buffer = ByteArray(256 * 1024)
     private var outBuffer: ByteArray? = null
     private var outIndex = 0
     private var isEof = false
@@ -114,11 +115,44 @@ object FileShareCrypto {
         val aesKeyBytes = hkdfSha256(
             inputKeyMaterial = sharedSecret,
             salt = "FocusWave FileShare Salt".toByteArray(Charsets.UTF_8),
-            info = "FocusWave ECDH AES-GCM v1".toByteArray(Charsets.UTF_8),
+            info = "FocusWave ECDH AES-CBC v1".toByteArray(Charsets.UTF_8),
             outputLength = 32
         )
-
         return SecretKeySpec(aesKeyBytes, "AES")
+    }
+
+    fun encryptAesCbcStringWith256Padding(
+        plainText: String,
+        nonceBytes: ByteArray,
+        aesKey: SecretKey
+    ): String {
+        val plainBytes = plainText.toByteArray(Charsets.UTF_8)
+
+        require(plainBytes.size <= 256) {"File name is too long (max 256 bytes)" }
+
+        val paddedBytes = ByteArray(256)
+        System.arraycopy(plainBytes, 0, paddedBytes, 0, plainBytes.size)
+
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
+        val encryptedBytes = cipher.doFinal(paddedBytes)
+        return Base64.getEncoder().encodeToString(encryptedBytes)
+    }
+
+    fun decryptAesCbcString(
+        encryptedBase64: String,
+        nonceBytes: ByteArray,
+        aesKey: SecretKey
+    ) : String {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+        cipher.init(Cipher.DECRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
+        val decodedBytes = Base64.getDecoder().decode(encryptedBase64)
+        val decryptedBytes = cipher.doFinal(decodedBytes)
+
+        val actualLength = decryptedBytes.indexOfFirst { it == 0.toByte() }.let {
+            if (it == -1) decryptedBytes.size else it
+        }
+        return String(decryptedBytes, 0, actualLength, Charsets.UTF_8)
     }
 
     fun encryptAesCbcStream(
@@ -141,9 +175,9 @@ object FileShareCrypto {
 
         cipher.init(Cipher.DECRYPT_MODE, aesKey, ivSpec)
 
-        // 8KB씩 청크 단위로 나누어 처리
+        // 256KB씩 청크 단위로 나누어 처리
         CipherInputStream(encryptedInputStream, cipher).use { cipherStream ->
-            val buffer = ByteArray(8 * 1024)
+            val buffer = ByteArray(256* 1024)
             var read: Int
             while (cipherStream.read(buffer).also { read = it } != -1) {
                 decryptedOutputStream.write(buffer, 0, read)
