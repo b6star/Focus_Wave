@@ -44,6 +44,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -68,15 +70,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Message
-import androidx.compose.material.icons.filled.Message
+import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Icon
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -126,6 +125,7 @@ fun MainScreen(
             onNewPathClick = timerViewModel::increasePathSeed,
             onFileShareClick = { showFileShare = true },
             onChatClick = { showChat = true },
+            onSettingsClick = { },
             timerViewModel = timerViewModel,
             onSoundEnabledChange = timerViewModel::setSoundEnabled,
             onSoundVolumeChange = timerViewModel::setSoundVolume
@@ -160,6 +160,7 @@ private fun MainScreenContent(
     onNewPathClick: () -> Unit,
     onFileShareClick: () -> Unit,
     onChatClick: () -> Unit,
+    onSettingsClick: () -> Unit,
     timerViewModel: TimerViewModel,
     onSoundEnabledChange: (SoundTrackId, Boolean) -> Unit,
     onSoundVolumeChange: (SoundTrackId, Float) -> Unit,
@@ -181,8 +182,6 @@ private fun MainScreenContent(
                 onPauseClick = onPauseClick,
                 onResetClick = onResetClick,
                 onNewPathClick = onNewPathClick,
-                onFileShareClick = onFileShareClick,
-                onChatClick = onChatClick,
                 onDecreaseFocus = timerViewModel::decreaseFocusMinutes,
                 onIncreaseFocus = timerViewModel::increaseFocusMinutes,
                 onDecreaseBreak = timerViewModel::decreaseBreakMinutes,
@@ -201,6 +200,13 @@ private fun MainScreenContent(
                 onEnabledChange = onSoundEnabledChange,
                 onVolumeChange = onSoundVolumeChange
             )
+        },
+        bottomNavigation = {
+            FocusBottomNavigation(
+                onFileShareClick = onFileShareClick,
+                onChatClick = onChatClick,
+                onSettingsClick = onSettingsClick
+            )
         }
     )
 }
@@ -211,6 +217,7 @@ private fun FocusScreen(
     timerOverlay: @Composable () -> Unit,
     countdownOverlay: @Composable () -> Unit,
     soundMixerPanel: @Composable () -> Unit,
+    bottomNavigation: @Composable () -> Unit = {},
     fileShareOverlay: @Composable () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -218,7 +225,8 @@ private fun FocusScreen(
         FocusScene()
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            containerColor = Color.Transparent
+            containerColor = Color.Transparent,
+            bottomBar = bottomNavigation
         ) { innerPadding ->
             BoxWithConstraints(
                 modifier = Modifier
@@ -266,7 +274,7 @@ private fun FocusScene(
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         Image(
-            painter = painterResource(id = R.drawable.space1_bg),
+            painter = painterResource(id = R.drawable.grok_space_02),
             contentDescription = "Space background",
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
@@ -282,15 +290,13 @@ private fun TimerControlsPanel(
     onPauseClick: () -> Unit,
     onResetClick: () -> Unit,
     onNewPathClick: () -> Unit,
-    onFileShareClick: () -> Unit,
-    onChatClick: () -> Unit,
     onDecreaseFocus: () -> Unit,
     onIncreaseFocus: () -> Unit,
     onDecreaseBreak: () -> Unit,
     onIncreaseBreak: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(24.dp)
     val journeyText = OrbitUtil.getStateByProgress(
         progress = uiState.progress,
         phase = uiState.phase,
@@ -300,10 +306,18 @@ private fun TimerControlsPanel(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color.White.copy(alpha = 0.12f), shape)
-            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.22f)), shape)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.20f),
+                        Color.White.copy(alpha = 0.09f)
+                    )
+                )
+            )
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)), shape)
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -329,29 +343,6 @@ private fun TimerControlsPanel(
                     text = journeyText,
                     color = Color.White.copy(alpha = 0.78f),
                     style = MaterialTheme.typography.labelMedium
-                )
-            }
-
-            Row(
-                modifier = Modifier.weight(2f),
-                horizontalArrangement = Arrangement
-                    .spacedBy(8.dp, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                TimerActionButton(
-                    onClick = onFileShareClick,
-                    modifier = Modifier,
-                    icon = Icons.Default.SwapHoriz
-                )
-                TimerActionButton(
-                    onClick = onChatClick,
-                    modifier = Modifier,
-                    icon = Icons.AutoMirrored.Filled.Message
-                )
-                TimerActionButton(
-                    onClick = {  },
-                    modifier = Modifier,
-                    icon = Icons.Default.Settings
                 )
             }
 
@@ -415,6 +406,89 @@ private fun TimerControlsPanel(
             }
 
         }
+    }
+}
+
+@Composable
+private fun FocusBottomNavigation(
+    onFileShareClick: () -> Unit,
+    onChatClick: () -> Unit,
+    onSettingsClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color.Black.copy(alpha = 0.42f))
+                .border(
+                    BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                    RoundedCornerShape(28.dp)
+                )
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BottomNavButton(
+                label = "파일",
+                icon = Icons.Default.UploadFile,
+                onClick = onFileShareClick
+            )
+            BottomNavButton(
+                label = "채팅",
+                icon = Icons.Default.ChatBubble,
+                onClick = onChatClick
+            )
+            BottomNavButton(
+                label = "설정",
+                icon = Icons.Default.Settings,
+                onClick = onSettingsClick
+            )
+        }
+    }
+}
+
+@Composable
+private fun BottomNavButton(
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    ElevatedButton(
+        onClick = onClick,
+        modifier = modifier.height(46.dp),
+        shape = RoundedCornerShape(22.dp),
+        elevation = ButtonDefaults.elevatedButtonElevation(
+            defaultElevation = 0.dp,
+            pressedElevation = 0.dp,
+            hoveredElevation = 0.dp,
+            focusedElevation = 0.dp
+        ),
+        colors = ButtonDefaults.elevatedButtonColors(
+            containerColor = Color.White.copy(alpha = 0.16f),
+            contentColor = Color.White,
+            disabledContainerColor = Color.White.copy(alpha = 0.08f),
+            disabledContentColor = Color.White.copy(alpha = 0.38f)
+        ),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(7.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1
+        )
     }
 }
 
@@ -656,8 +730,6 @@ fun MainScreenPreview() {
                     onPauseClick = {},
                     onResetClick = {},
                     onNewPathClick = {},
-                    onFileShareClick = {},
-                    onChatClick = {},
                     onIncreaseBreak = {},
                     onIncreaseFocus = {},
                     onDecreaseFocus = {},
@@ -666,6 +738,7 @@ fun MainScreenPreview() {
             },
             countdownOverlay = {},
             soundMixerPanel = {},
+            bottomNavigation = {},
             fileShareOverlay = {},
         )
     }

@@ -1,93 +1,217 @@
 ﻿<!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FocusWave - 파일공유</title>
     <style>
+        :root[data-theme="dark"] {
+            --bg: #0e1014;
+            --bg-gradient:
+                radial-gradient(circle at 18% 12%, rgba(111, 107, 255, 0.28), transparent 28%),
+                radial-gradient(circle at 82% 18%, rgba(230, 138, 134, 0.18), transparent 30%),
+                linear-gradient(145deg, #0b0d13 0%, #111521 44%, #17131f 100%);
+            --panel: rgba(22, 25, 31, 0.86);
+            --panel2: rgba(28, 32, 39, 0.84);
+            --line: rgba(255, 255, 255, 0.12);
+            --txt: #f0f2f6;
+            --dim: #9ba3b4;
+            --a: #7c77ff;
+            --a2: #e68a86;
+            --a-soft: rgba(124, 119, 255, 0.16);
+            --a-txt: #ffffff;
+            --button-gradient: linear-gradient(135deg, #7c77ff 0%, #b06cf7 48%, #e68a86 100%);
+            --button-shadow: 0 12px 26px rgba(124, 119, 255, 0.24);
+            --card-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+            --ok: #2fbf7e;
+            --err: #e5484d;
+        }
+
+        :root[data-theme="light"] {
+            --bg: #fff7ed;
+            --bg-gradient:
+                radial-gradient(circle at 16% 10%, rgba(255, 205, 161, 0.46), transparent 30%),
+                radial-gradient(circle at 84% 12%, rgba(181, 170, 255, 0.34), transparent 32%),
+                linear-gradient(145deg, #fff8ee 0%, #fff3e1 45%, #fffdf8 100%);
+            --panel: rgba(255, 253, 248, 0.88);
+            --panel2: rgba(255, 246, 233, 0.9);
+            --line: rgba(128, 91, 57, 0.16);
+            --txt: #28221d;
+            --dim: #7b6f65;
+            --a: #7568e8;
+            --a2: #e8916e;
+            --a-soft: rgba(232, 145, 110, 0.15);
+            --a-txt: #ffffff;
+            --button-gradient: linear-gradient(135deg, #7568e8 0%, #c879c8 48%, #e8916e 100%);
+            --button-shadow: 0 12px 24px rgba(199, 121, 91, 0.24);
+            --card-shadow: 0 18px 42px rgba(108, 74, 42, 0.12);
+            --ok: #0f9d63;
+            --err: #d92d20;
+        }
+
+        * { box-sizing: border-box; }
+
         body {
-            background-color: #1E1E2E;
-            color: #FFFFFF;
-            font-family: 'Malgun Gothic', sans-serif;
+            background: var(--bg-gradient);
+            background-attachment: fixed;
+            color: var(--txt);
+            font-family: system-ui, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+            -webkit-font-smoothing: antialiased;
             margin: 0;
-            padding: 40px;
+            padding: 40px 20px 60px;
             display: flex;
             flex-direction: column;
             align-items: center;
+            min-height: 100vh;
         }
 
-        h1 {
-            color: #8A86E6;
+        /* ---------- 헤더 ---------- */
+        .app-header {
+            width: 100%;
+            max-width: 800px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
         }
 
+        .brand { display: flex; align-items: center; gap: 11px; }
+
+        .brand-mark {
+            width: 38px; height: 38px;
+            border-radius: 11px;
+            display: grid; place-items: center;
+            background: var(--button-gradient);
+            color: #fff;
+            font-weight: 700;
+            font-size: 17px;
+            box-shadow: var(--button-shadow);
+        }
+
+        .brand-text b { font-size: 19px; letter-spacing: -.3px; display: block; }
+        .brand-text span { font-size: 11px; color: var(--dim); letter-spacing: .1em; }
+
+        h1 { margin: 0; font-size: 19px; letter-spacing: -.3px; }
+        h2 { margin: 0 0 6px; font-size: 15.5px; letter-spacing: -.2px; }
+
+        .card > p {
+            font-size: 12.8px;
+            color: var(--dim);
+            line-height: 1.6;
+            margin: 0 0 16px;
+        }
+
+        .theme-toggle {
+            margin-left: auto;
+            width: auto;
+            margin-top: 0;
+            padding: 9px 14px;
+            font-size: 12.5px;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--panel), var(--panel2));
+            color: var(--txt);
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 7px;
+        }
+        .theme-toggle:hover { border-color: var(--a); color: var(--a); background: var(--panel); }
+
+        #connectionStatus {
+            width: 100%;
+            max-width: 800px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            padding: 10px 14px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--panel), var(--panel2));
+            margin: 0 0 20px;
+            box-shadow: var(--card-shadow);
+        }
+
+        /* ---------- 카드 ---------- */
         .container {
             display: none;
             flex-wrap: wrap;
-            gap: 20px;
+            gap: 16px;
             width: 100%;
             max-width: 800px;
         }
 
         .card {
-            background-color: rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            padding: 24px;
+            background: linear-gradient(145deg, var(--panel), var(--panel2));
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 22px;
             flex: 1 0 300px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            box-shadow: var(--card-shadow);
+            backdrop-filter: blur(18px);
         }
 
         @media (max-width: 700px) {
-            .card {
-                background-color: rgba(255, 255, 255, 0.05);
-                border-radius: 16px;
-                padding: 24px;
-                flex: 0 0 100%;
-                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-            }
+            .card { flex: 0 0 100%; }
         }
 
         button {
-            background-color: #E68A86;
-            color: white;
+            background: var(--button-gradient);
+            background-size: 180% 180%;
+            color: var(--a-txt);
             border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-weight: bold;
+            padding: 13px 24px;
+            border-radius: 10px;
+            font-weight: 700;
+            font-family: inherit;
+            font-size: 14px;
             cursor: pointer;
             margin-top: 10px;
             width: 100%;
+            box-shadow: var(--button-shadow);
+            transition: background-position .18s ease, filter .15s ease, transform .15s ease;
         }
 
         button:hover {
-            background-color: #d87b77;
+            background-position: 100% 50%;
+            filter: brightness(1.04);
+            transform: translateY(-1px);
         }
 
-        input[type="file"] {
-            margin-bottom: 10px;
-            color: #ccc;
-        }
+        input[type="file"] { margin-bottom: 10px; color: var(--dim); }
 
         input[type="text"] {
             width: 100%;
-            padding: 12px;
-            border-radius: 8px;
-            border: none;
+            padding: 13px;
+            border-radius: 10px;
+            border: 1px solid var(--line);
+            background: linear-gradient(135deg, var(--panel2), var(--panel));
+            color: var(--txt);
             box-sizing: border-box;
-            font-size: 18px;
+            font-size: 20px;
+            letter-spacing: .35em;
             text-align: center;
             margin-top: 8px;
+            outline: none;
+            font-family: inherit;
         }
+        input[type="text"]:focus { border-color: var(--a); }
 
-        ul {
-            list-style: none;
-            padding: 0;
-        }
+        input[type="checkbox"] { accent-color: var(--a); width: 15px; height: 15px; }
+
+        ul { list-style: none; padding: 0; margin: 0; }
 
         li {
-            background-color: rgba(0, 0, 0, 0.2);
+            background: var(--panel2);
+            border: 1px solid var(--line);
             margin-bottom: 8px;
             padding: 12px;
-            border-radius: 8px;
+            border-radius: 10px;
+            font-size: 13px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -96,15 +220,13 @@
         }
 
         a {
-            color: #8A86E6;
+            color: var(--a);
             text-decoration: none;
-            font-weight: bold;
+            font-weight: 700;
+            font-size: 12.5px;
             cursor: pointer;
         }
-
-            a:hover {
-                text-decoration: underline;
-            }
+        a:hover { text-decoration: underline; }
 
         .checkbox-label {
             display: flex;
@@ -113,18 +235,11 @@
             cursor: pointer;
             flex: 1 0 180px;
             min-width: 0;
+            font-size: 12.8px;
         }
+        .checkbox-label input { flex: 0 0 auto; }
 
-            .checkbox-label input {
-                flex: 0 0 auto;
-            }
-
-        .file-name {
-            flex: 1;
-            min-width: 0;
-            overflow-wrap: anywhere;
-            word-break: break-word;
-        }
+        .file-name { flex: 1; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
 
         .file-download {
             white-space: nowrap;
@@ -135,14 +250,8 @@
         }
 
         @media (max-width: 480px) {
-            #fileList li {
-                flex-direction: column;
-                align-items: stretch;
-            }
-
-            .file-download {
-                align-self: flex-end;
-            }
+            #fileList li { flex-direction: column; align-items: stretch; }
+            .file-download { align-self: flex-end; }
         }
 
         .action-bar {
@@ -150,58 +259,68 @@
             justify-content: space-between;
             align-items: center;
             margin: 15px 0 10px 0;
+            gap: 10px;
         }
 
-        #authCard {
-            max-width: 360px;
-            width: 100%;
-            margin-bottom: 20px;
+        .action-bar button {
+            width: auto;
+            margin-top: 0;
+            padding: 9px 14px;
+            font-size: 12.5px;
+            background: linear-gradient(135deg, var(--panel2), var(--panel));
+            color: var(--txt);
+            border: 1px solid var(--line);
+            box-shadow: none;
         }
+        .action-bar button:hover { border-color: var(--a); color: var(--a); filter: none; }
 
-        #authStatus,
-        #uploadStatus,
-        #chatStatus {
+        #authCard { max-width: 380px; width: 100%; margin-bottom: 20px; }
+
+        #authStatus, #uploadStatus, #chatStatus {
             font-size: 12px;
-            color: #E68A86;
+            color: var(--dim);
+            margin: 10px 0 0;
+            min-height: 15px;
         }
 
+        /* ---------- 드롭존 ---------- */
         .drop-zone {
-            border: 2px dashed #8A86E6;
+            border: 1.5px dashed var(--line);
             border-radius: 12px;
-            padding: 40px 20px;
+            padding: 36px 20px;
             text-align: center;
-            background-color: rgba(138, 134, 230, 0.05);
+            background:
+                linear-gradient(135deg, var(--panel2), var(--panel)),
+                var(--panel2);
             cursor: pointer;
-            transition: all 0.2s ease-in-out;
+            transition: border-color .15s, background .15s, transform .15s;
             margin-bottom: 15px;
         }
-
-            .drop-zone.dragover {
-                background-color: rgba(230, 138, 134, 0.15);
-                border-color: #E68A86;
-                transform: scale(1.02);
-            }
-
-            .drop-zone p {
-                margin: 5px 0;
-                font-size: 18px;
-                font-weight: bold;
-                color: #ccc;
-            }
-
-        .chat-card {
-            flex: 1 1 100%;
+        .drop-zone:hover {
+            border-color: var(--a);
+            background: linear-gradient(135deg, var(--a-soft), var(--panel2));
+            transform: translateY(-1px);
         }
+        .drop-zone.dragover {
+            border-color: var(--a);
+            background: linear-gradient(135deg, var(--a-soft), var(--panel2));
+        }
+        .drop-zone p { margin: 8px 0 4px; font-size: 14px; font-weight: 600; color: var(--txt); }
+        .drop-zone .dz-icon { font-size: 22px; color: var(--dim); }
+        .drop-zone span { font-size: 11.5px; color: var(--dim); }
+
+        /* ---------- 채팅 ---------- */
+        .chat-card { flex: 1 1 100%; }
 
         .chat-window {
             display: flex;
             flex-direction: column;
             gap: 12px;
-            min-height: 360px;
+            min-height: 320px;
             max-height: 520px;
-            background: rgba(0, 0, 0, 0.18);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 16px;
+            background: linear-gradient(145deg, var(--panel2), var(--panel));
+            border: 1px solid var(--line);
+            border-radius: 12px;
             padding: 14px;
         }
 
@@ -214,106 +333,96 @@
             padding-right: 4px;
         }
 
-        .chat-message-row {
-            display: flex;
-        }
-
-        .chat-message-row.mine {
-            justify-content: flex-end;
-        }
+        .chat-message-row { display: flex; }
+        .chat-message-row.mine { justify-content: flex-end; }
 
         .chat-bubble {
             max-width: min(72%, 460px);
-            padding: 10px 14px;
-            border-radius: 18px;
-            background: rgba(255, 255, 255, 0.12);
-            color: #FFFFFF;
-            line-height: 1.45;
+            padding: 10px 13px;
+            border-radius: 12px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            color: var(--txt);
+            font-size: 13px;
+            line-height: 1.5;
             overflow-wrap: anywhere;
         }
 
         .chat-message-row.mine .chat-bubble {
-            background: #8A86E6;
+            background: var(--button-gradient);
+            border-color: transparent;
+            color: #fff;
             border-bottom-right-radius: 4px;
+            box-shadow: var(--button-shadow);
         }
 
-        .chat-message-row:not(.mine) .chat-bubble {
-            border-bottom-left-radius: 4px;
-        }
+        .chat-message-row:not(.mine) .chat-bubble { border-bottom-left-radius: 4px; }
 
-        .chat-input-row {
-            display: flex;
-            align-items: flex-end;
-            gap: 10px;
-        }
+        .chat-input-row { display: flex; align-items: flex-end; gap: 10px; }
 
         #chatInput {
             flex: 1;
-            min-height: 44px;
+            min-height: 46px;
             max-height: 120px;
             resize: vertical;
-            border: 1px solid rgba(255, 255, 255, 0.18);
-            border-radius: 18px;
-            background: rgba(255, 255, 255, 0.08);
-            color: #FFFFFF;
-            padding: 12px 14px;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--panel), var(--panel2));
+            color: var(--txt);
+            padding: 13px 14px;
             box-sizing: border-box;
             font-family: inherit;
-            font-size: 15px;
+            font-size: 14px;
             outline: none;
         }
-
-        #chatInput:focus {
-            border-color: #8A86E6;
-        }
+        #chatInput:focus { border-color: var(--a); }
 
         .chat-send-button {
-            width: 48px;
-            height: 48px;
+            width: 46px;
+            height: 46px;
             margin-top: 0;
             padding: 0;
-            border-radius: 50%;
-            background: #8A86E6;
-            font-size: 18px;
+            border-radius: 10px;
+            background: var(--button-gradient);
+            font-size: 16px;
             flex: 0 0 auto;
         }
 
-        .chat-send-button:hover {
-            background: #7773d8;
-        }
-
         @media (max-width: 560px) {
-            body {
-                padding: 24px 14px;
-            }
-
-            .card {
-                padding: 18px;
-            }
-
-            .chat-bubble {
-                max-width: 84%;
-            }
+            body { padding: 24px 14px 40px; }
+            .card { padding: 18px; }
+            .chat-bubble { max-width: 84%; }
         }
     </style>
 </head>
 <body>
 
-<h1>🚀 Focus Wave 파일공유</h1>
+<header class="app-header">
+    <div class="brand">
+        <div class="brand-mark">F</div>
+        <div class="brand-text">
+            <b>FocusWave</b>
+            <span>LOCAL FILE SHARE</span>
+        </div>
+    </div>
+    <button class="theme-toggle" id="themeToggle" type="button" aria-label="테마 전환">
+        <span id="themeIcon">🌙</span><span id="themeLabel">다크</span>
+    </button>
+</header>
 
-<p id="connectionStatus" style="font-size: 18px; font-weight: bold; color: #FFD700;">
-    🟡 폰과 연결 확인 중...
+<p id="connectionStatus">
+    <span>🟡</span> 폰과 연결 확인 중...
 </p>
 
 <div id="authCard" class="card">
-    <h2>🔐 인증 코드 입력</h2>
+    <h2>인증 코드 입력</h2>
     <p>폰 화면에 표시된 6자리 인증 코드를 입력하세요.</p>
 
     <input type="text"
            id="authCodeInput"
            maxlength="6"
            inputmode="numeric"
-           placeholder="예: 123456">
+           placeholder="000000">
 
     <button onclick="verifyCode()">접속하기</button>
     <p id="authStatus"></p>
@@ -321,23 +430,22 @@
 
 <div class="container" id="fileShareContainer">
     <div class="card">
-        <h2>💻 파일 업로드</h2>
+        <h2>파일 업로드</h2>
         <p>폰으로 보낼 파일을 선택하거나 아래 영역에 끌어다 놓으세요.</p>
 
-        <!-- 💡 새롭게 추가된 드롭존 영역 -->
         <div id="dropZone" class="drop-zone" onclick="document.getElementById('fileInput').click()">
-            <p>📥 Drop files here!</p>
-            <span style="font-size: 14px; color: #aaa;">(또는 클릭하여 파일 선택)</span>
-            <!-- 기본 인풋은 display: none 으로 숨깁니다 -->
+            <div class="dz-icon">⤓</div>
+            <p>여기에 파일을 놓으세요</p>
+            <span>또는 클릭하여 파일 선택</span>
             <input type="file" id="fileInput" name="files" multiple style="display: none;">
         </div>
 
-        <button onclick="uploadFile()">🚀 폰으로 전송</button>
+        <button onclick="uploadFile()">폰으로 전송</button>
         <p id="uploadStatus"></p>
     </div>
 
     <div class="card">
-        <h2>📱 파일 다운로드</h2>
+        <h2>파일 다운로드</h2>
         <p>현재 폰에서 공유 중인 파일 목록입니다.</p>
 
         <div class="action-bar">
@@ -345,9 +453,7 @@
                 <input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> 전체 선택
             </label>
 
-            <button onclick="downloadSelected()" style="width: auto; margin-top: 0; padding: 8px 16px;">
-                선택 다운로드 ⬇️
-            </button>
+            <button onclick="downloadSelected()">선택 다운로드</button>
         </div>
 
         <ul id="fileList">
@@ -356,7 +462,7 @@
     </div>
 
     <div class="card chat-card">
-        <h2>💬 로컬 채팅</h2>
+        <h2>로컬 채팅</h2>
         <p>같은 Wi-Fi에 연결된 기기와 임시 메시지를 주고받는 공간입니다.</p>
 
         <div class="chat-window">
@@ -375,6 +481,30 @@
         <p id="chatStatus"></p>
     </div>
 </div>
+
+<script>
+    // ---------- 테마 토글 (localStorage 기억) ----------
+    (function () {
+        const root = document.documentElement;
+        const saved = localStorage.getItem('fw-theme');
+        const initial = saved || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        applyTheme(initial);
+
+        function applyTheme(theme) {
+            root.setAttribute('data-theme', theme);
+            const icon = document.getElementById('themeIcon');
+            const label = document.getElementById('themeLabel');
+            if (icon) icon.textContent = theme === 'dark' ? '🌙' : '☀️';
+            if (label) label.textContent = theme === 'dark' ? '다크' : '라이트';
+        }
+
+        document.getElementById('themeToggle').addEventListener('click', () => {
+            const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('fw-theme', next);
+            applyTheme(next);
+        });
+    })();
+</script>
 
 <script type="module">
     import { x25519 } from "https://esm.sh/@noble/curves@1.9.7/ed25519?bundle";
@@ -399,6 +529,7 @@
         const btn = document.querySelector(
             `.file-download[data-filename="${fileName}"]`
         )
+        if (!btn) return;
         const state = downloadState[fileName];
         if (state) {
                 btn.textContent = state.text;
@@ -462,8 +593,6 @@
         aesKeyBytes = deriveAesKey(sharedSecret);
     }
 
-
-
     function pkcs7Pad(data) {
         const blockSize = 16;
         const padLength = blockSize - (data.length % blockSize);
@@ -472,8 +601,6 @@
         padded.fill(padLength, data.length);
         return padded;
     }
-
-
 
     async function encryptFileName(fileName) {
         const nonce = randomBytes(12);
@@ -491,7 +618,6 @@
             metaNonceBase64: bytesToBase64(nonce)
         };
     }
-
 
     function decryptFileName(encryptedBase64, nonceBase64) {
         const nonce = base64ToBytes(nonceBase64);
@@ -511,29 +637,28 @@
         return textDecoder.decode(plainBytes);
     }
 
+    async function encryptFile(file) {
+        if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
 
-async function encryptFile(file) {
-    if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
+        // 브라우저 렌더링 멈춤 방지
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-    // 브라우저 렌더링 멈춤 방지
-    await new Promise(resolve => setTimeout(resolve, 100));
+        // GCM에서는 일반적으로 12바이트 nonce 사용
+        const nonce = randomBytes(12);
 
-    // GCM에서는 일반적으로 12바이트 nonce 사용
-    const nonce = randomBytes(12);
+        // 파일 전체를 메모리에 읽음
+        const plainBuffer = await file.arrayBuffer();
+        const plainBytes = new Uint8Array(plainBuffer);
 
-    // 파일 전체를 메모리에 읽음
-    const plainBuffer = await file.arrayBuffer();
-    const plainBytes = new Uint8Array(plainBuffer);
+        // AES-GCM 암호화
+        const aes = gcm(aesKeyBytes, nonce);
+        const encryptedBytes = aes.encrypt(plainBytes);
 
-    // AES-GCM 암호화
-    const aes = gcm(aesKeyBytes, nonce);
-    const encryptedBytes = aes.encrypt(plainBytes);
-
-    return {
-        encryptedBlob: new Blob([encryptedBytes]),
-        nonceBase64: bytesToBase64(nonce)
-    };
-}
+        return {
+            encryptedBlob: new Blob([encryptedBytes]),
+            nonceBase64: bytesToBase64(nonce)
+        };
+    }
 
     function pkcs7Unpad(data) {
         const padLength = data[data.length - 1];
@@ -559,7 +684,7 @@ async function encryptFile(file) {
         const nonceUrlParam = encodeURIComponent(metaCrypto.metaNonceBase64);
 
         // 💡 장부 기록 및 UI 업데이트
-        downloadState[fileName] = { text: "요청 중... ⏳", color: "#FFD700", disabled: true };
+        downloadState[fileName] = { text: "요청 중... ⏳", color: "#f59e0b", disabled: true };
         updateDownloadBtnUI(fileName);
 
         const response = await fetch(`/download/${encryptedUrlParam}?nonce=${nonceUrlParam}`, {
@@ -569,7 +694,7 @@ async function encryptFile(file) {
 
         if (!response.ok) {
             alert(`다운로드 실패: ${response.status}`);
-            downloadState[fileName] = { text: "실패 ❌", color: "#F44336", disabled: true };
+            downloadState[fileName] = { text: "실패 ❌", color: "#e5484d", disabled: true };
             updateDownloadBtnUI(fileName);
             return;
         }
@@ -609,7 +734,7 @@ async function encryptFile(file) {
             const percent = Math.round((loadedBytes / totalBytes) * 100);
 
             // 💡 퍼센트 업데이트
-            downloadState[fileName] = { text: `다운로드 중 ${percent}%`, color: "#FFD700", disabled: true };
+            downloadState[fileName] = { text: `다운로드 중 ${percent}%`, color: "#f59e0b", disabled: true };
             updateDownloadBtnUI(fileName);
         }
 
@@ -641,13 +766,12 @@ async function encryptFile(file) {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-
-            downloadState[fileName] = { text: "다운로드 ✅", color: "#4CAF50", disabled: false };
+            downloadState[fileName] = { text: "다운로드 ✅", color: "#2fbf7e", disabled: false };
             updateDownloadBtnUI(fileName);
 
         } catch (error) {
             console.error("복호화 중 에러 발생:", error);
-            downloadState[fileName] = { text: "에러 ❌", color: "#F44336", disabled: true };
+            downloadState[fileName] = { text: "에러 ❌", color: "#e5484d", disabled: true };
             updateDownloadBtnUI(fileName);
         }
     }
@@ -952,14 +1076,14 @@ async function encryptFile(file) {
             clearTimeout(timeoutId);
 
             if (response.ok) {
-                statusElement.innerHTML = `🟢 폰(${ipAddress})과 정상적으로 연결됨`;
-                statusElement.style.color = "#4CAF50";
+                statusElement.innerHTML = `<span>🟢</span> 폰(${ipAddress})과 정상적으로 연결됨`;
+                statusElement.style.color = "var(--ok)";
             } else {
                 throw new Error("서버 응답 오류");
             }
         } catch (error) {
-            statusElement.innerHTML = `🔴 폰(${ipAddress})과 연결이 끊어졌습니다!`;
-            statusElement.style.color = "#F44336";
+            statusElement.innerHTML = `<span>🔴</span> 폰(${ipAddress})과 연결이 끊어졌습니다!`;
+            statusElement.style.color = "var(--err)";
         }
     }
 
@@ -993,7 +1117,10 @@ async function encryptFile(file) {
         const selectAllCheckbox = document.getElementById('selectAll');
 
         if (fileInput) fileInput.value = "";
-        if (uploadStatus) uploadStatus.innerText = "";
+        if (uploadStatus) {
+            uploadStatus.innerText = "";
+            uploadStatus.style.color = "";
+        }
         if (selectAllCheckbox) selectAllCheckbox.checked = false;
 
         if (fileList) {
@@ -1147,16 +1274,16 @@ async function encryptFile(file) {
 
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
             fileInput.files = e.dataTransfer.files;
-            uploadStatus.innerText = `✅ ${fileInput.files.length}개의 파일이 선택되었습니다. 전송을 눌러주세요!`;
-            uploadStatus.style.color = "#4CAF50"; // 초록색으로 변경
+            uploadStatus.innerText = `${fileInput.files.length}개의 파일이 선택되었습니다. 전송을 눌러주세요.`;
+            uploadStatus.style.color = "var(--ok)";
         }
     });
 
     // 클릭해서 파일을 선택했을 때도 피드백을 주기 위한 이벤트
     fileInput.addEventListener('change', () => {
         if (fileInput.files.length > 0) {
-            uploadStatus.innerText = `✅ ${fileInput.files.length}개의 파일이 선택되었습니다. 전송을 눌러주세요!`;
-            uploadStatus.style.color = "#4CAF50";
+            uploadStatus.innerText = `${fileInput.files.length}개의 파일이 선택되었습니다. 전송을 눌러주세요.`;
+            uploadStatus.style.color = "var(--ok)";
         }
     });
 
