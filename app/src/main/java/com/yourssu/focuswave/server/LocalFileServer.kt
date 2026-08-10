@@ -5,14 +5,9 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
-import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.InetAddress
-import java.net.ServerSocket
-import java.net.URLConnection
-import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -151,11 +146,6 @@ class LocalFileServer(
         val now = System.currentTimeMillis()
 
         val userAgent = session.headers["user-agent"] ?: "Unknown Device"
-        Log.d("Session Debug", "client ip: ${clientIp}")
-        Log.d("Session Debug", "Host Name: ${getDeviceFriendlyName(userAgent)}")
-        Log.d("Session Debug", "userAgent: ${userAgent}")
-
-
 
         if (attempt.banned) {
             return  jsonError(Response.Status.FORBIDDEN, "This IP is blocked until server restart")
@@ -547,100 +537,125 @@ class LocalFileServer(
     }
 
     private fun handleDownload(session: IHTTPSession): Response =
-        handleFileResponse(session, DOWNLOAD_ROUTE_PREFIX, "attachment", "download")
+        handleFileResponse(session, DOWNLOAD_ROUTE_PREFIX, "download")
 
     private fun handlePreview(session: IHTTPSession): Response =
-        handleFileResponse(session, PREVIEW_ROUTE_PREFIX, "inline", "preview")
+        handleFileResponse(session, PREVIEW_ROUTE_PREFIX, "preview")
 
     private fun handleFileResponse(
         session: IHTTPSession,
         routePrefix: String,
-        disposition: String,
         action: String
     ): Response {
-
-        val encryptedFileBase64 = session.uri.removePrefix(routePrefix)
-
-        val params = session.parameters
-        val metaNonceBase64 = params["nonce"]?.firstOrNull()
-        if (encryptedFileBase64.isEmpty() || metaNonceBase64.isNullOrEmpty()) {
+        val encryptedFileNameBase64 = session.uri.removePrefix(routePrefix)
+        val metaNonceBase64 = session.parameters["nonce"]?.firstOrNull()
+        if (encryptedFileNameBase64.isEmpty() || metaNonceBase64.isNullOrEmpty()) {
             return jsonError(Response.Status.BAD_REQUEST, "Missing cryptographic parameters for File Name")
         }
 
-        //암호화 키 가져오기
         val token =
             getRequestToken(session)
                 ?: return unauthorizedResponse()
-
         val aesKey =
             clientAesKeys[token]
                 ?: return jsonError(Response.Status.UNAUTHORIZED, "Encryption key is missing")
 
-        val actualFileName = try {
-            FileShareCrypto.decryptAesCbcString(encryptedFileBase64, Base64.getDecoder().decode(metaNonceBase64), aesKey)
-        } catch (e: Exception) {
-            return jsonError(Response.Status.BAD_REQUEST, "Invalid encrypted file name")
-        }
+        val actualFileName = decryptRequestedFileName(
+            encryptedFileNameBase64 = encryptedFileNameBase64,
+            metaNonceBase64 = metaNonceBase64,
+            aesKey = aesKey
+        ) ?: return jsonError(Response.Status.BAD_REQUEST, "Invalid encrypted file name")
 
         val safeName = sanitizeFileName(actualFileName)
         if (safeName == null || safeName != actualFileName) {
             return jsonError(Response.Status.BAD_REQUEST, "Invalid file name")
         }
 
-        val directory = sharedDirectory(appFilesDirectory)
-        val file = File(directory, safeName)
         return try {
-            if (
-                file.canonicalFile.parentFile != directory.canonicalFile ||
-                !file.isFile
-            ) {
-                return jsonError(Response.Status.NOT_FOUND, "File not found")
-            }
-
-            logDebug("$action requested: name=${file.name}")
-
-            // val mimeType = URLConnection.guessContentTypeFromName(file.name) ?: "application/octet-stream"
-            val dummyMimeType = "application/octet-stream"
-
-
-            val nonceBytes = ByteArray(16)
-            secureRandom.nextBytes(nonceBytes)
-
-            val metaNonceBytes = ByteArray(16)
-            secureRandom.nextBytes(metaNonceBytes)
-            val encryptedFileNameBase64 = FileShareCrypto.encryptAesCbcStringWith256Padding(file.name, metaNonceBytes, aesKey)
-            val metaNonceBase64 = Base64.getEncoder().encodeToString(metaNonceBytes)
-
-            val originalSize = file.length()
-            val expectedEncryptedSize = (originalSize / 16) * 16 + 16
-
-            val encryptedStream = FileShareCrypto.encryptAesCbcStream(
-                plainInputStream = FileInputStream(file),
-                nonceBytes = nonceBytes,
-                aesKey = aesKey
+            val file = resolveSharedFile(safeName)
+                ?: return jsonError(Response.Status.NOT_FOUND, "File not found")
+            createEncryptedFileResponse(
+                file = file,
+                aesKey = aesKey,
+                action = action
             )
-
-
-            newFixedLengthResponse(
-                Response.Status.OK,
-                dummyMimeType,
-                encryptedStream,
-                expectedEncryptedSize
-            ).apply {
-                addHeader(
-                    "Content-Disposition",
-                    "attachment; filename=\"encrypted_data.bin\""
-                )
-                addHeader("X-FocusWave-Encrypted", "true")
-                addHeader("X-FocusWave-Nonce", Base64.getEncoder().encodeToString(nonceBytes))
-                addHeader("X-File-Name-Encrypted", encryptedFileNameBase64)
-                addHeader("X-Meta-Nonce", metaNonceBase64)
-            }
-
-
         } catch (error: IOException) {
             logDebug("$action failed: name=$safeName, reason=${error.message}")
             jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file")
+        }
+    }
+
+    private fun decryptRequestedFileName(
+        encryptedFileNameBase64: String,
+        metaNonceBase64: String,
+        aesKey: SecretKey
+    ): String? = runCatching {
+        FileShareCrypto.decryptAesGcmString(
+            encryptedFileNameBase64,
+            Base64.getDecoder().decode(metaNonceBase64),
+            aesKey
+        )
+    }.getOrNull()
+
+    private fun resolveSharedFile(safeName: String): File? {
+        val directory = sharedDirectory(appFilesDirectory)
+        val file = File(directory, safeName)
+        return file.takeIf {
+            it.canonicalFile.parentFile == directory.canonicalFile && it.isFile
+        }
+    }
+
+    private fun createEncryptedFileResponse(
+        file: File,
+        aesKey: SecretKey,
+        action: String
+    ): Response {
+        val dummyMimeType = "application/octet-stream"
+
+        val metaNonceBytes = ByteArray(12)
+        secureRandom.nextBytes(metaNonceBytes)
+        val encryptedFileNameBase64 =
+            FileShareCrypto.encryptAesGcmStringWith256Padding(file.name, metaNonceBytes, aesKey)
+        val metaNonceBase64 = Base64.getEncoder().encodeToString(metaNonceBytes)
+
+        val nonceBytes = ByteArray(12)
+        secureRandom.nextBytes(nonceBytes)
+        val expectedEncryptedSize = file.length() + 16
+
+        return object : Response(
+            Response.Status.OK,
+            dummyMimeType,
+            null,  // 실시간 스트리밍을 위해 send를 override
+            expectedEncryptedSize
+        ) {
+            override fun send(outputStream: OutputStream) {
+                try {
+                    outputStream.write(
+                        buildString {
+                            append("HTTP/1.1 ${Response.Status.OK.description}\r\n")
+                            append("Content-Type: $dummyMimeType\r\n")
+                            append("Content-Length: $expectedEncryptedSize\r\n")
+                            append("Content-Disposition: attachment; filename=\"encrypted_data.bin\"\r\n")
+                            append("X-FocusWave-Encrypted: true\r\n")
+                            append("X-FocusWave-Nonce: ${Base64.getEncoder().encodeToString(nonceBytes)}\r\n")
+                            append("X-File-Name-Encrypted: $encryptedFileNameBase64\r\n")
+                            append("X-Meta-Nonce: $metaNonceBase64\r\n")
+                            append("\r\n")
+                        }.toByteArray(StandardCharsets.UTF_8)
+                    )
+
+                    file.inputStream().use { plainInput ->
+                        FileShareCrypto.encryptAesGcmStream(
+                            plainInputStream = plainInput,
+                            encryptedOutputStream = outputStream,
+                            nonceBytes = nonceBytes,
+                            aesKey = aesKey
+                        )
+                    }
+                } catch (error: IOException) {
+                    logDebug("$action response failed: ${error.message}")
+                }
+            }
         }
     }
 
@@ -673,7 +688,7 @@ class LocalFileServer(
         val rawFileName = try{
             val metaNonceBytes = Base64.getDecoder().decode(metadataNonceBase64)
 
-            FileShareCrypto.decryptAesCbcString(
+            FileShareCrypto.decryptAesGcmString(
                 encryptedFileNameBase64,
                 metaNonceBytes,
                 aesKey
@@ -762,7 +777,7 @@ class LocalFileServer(
                 tempDestination.outputStream().buffered(256 * 1024).use { decryptedOutput ->
 
                     // 🚀 임시 파일 경유 없이, 와이파이 스트림을 받자마자 바로 복호화해서 디스크에 때려 박습니다.
-                    FileShareCrypto.decryptAesCbcStream(
+                    FileShareCrypto.decryptAesGcmStream(
                         encryptedInputStream = bufferedNetworkInput,
                         decryptedOutputStream = decryptedOutput,
                         nonceBytes = nonceBytes,

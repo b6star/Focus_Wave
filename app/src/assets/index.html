@@ -378,7 +378,7 @@
 
 <script type="module">
     import { x25519 } from "https://esm.sh/@noble/curves@1.9.7/ed25519?bundle";
-    import { cbc, gcm } from "https://esm.sh/@noble/ciphers@1.3.0/aes?bundle";
+    import { gcm } from "https://esm.sh/@noble/ciphers@1.3.0/aes?bundle";
     import { hkdf } from "https://esm.sh/@noble/hashes@1.8.0/hkdf?bundle";
     import { sha256 } from "https://esm.sh/@noble/hashes@1.8.0/sha2?bundle";
 
@@ -437,7 +437,7 @@
             sha256,  // HKDF에서 사용할 해시 함수
             sharedSecret,
             textEncoder.encode("FocusWave FileShare Salt"),   // 랜덤 Key Salt값
-            textEncoder.encode("FocusWave ECDH AES-CBC v1"),  //
+            textEncoder.encode("FocusWave ECDH AES-GCM v1"),  //
             32  // 출력 키 길이 32바이트 = 256비트
         );
     }
@@ -494,10 +494,10 @@
 
 
     function decryptFileName(encryptedBase64, nonceBase64) {
-        const iv = base64ToBytes(nonceBase64);
+        const nonce = base64ToBytes(nonceBase64);
         const encryptedBytes = base64ToBytes(encryptedBase64);
 
-        const aes = cbc(aesKeyBytes, iv);
+        const aes = gcm(aesKeyBytes, nonce);
         const decryptedWithPadding = aes.decrypt(encryptedBytes);
 
         // 1. PKCS7 패딩 찌꺼기 우선 제거 (272바이트 -> 256바이트로 복원)
@@ -591,7 +591,7 @@ async function encryptFile(file) {
             }
         }
 
-        const iv = base64ToBytes(nonceBase64);
+        const nonce = base64ToBytes(nonceBase64);
         const contentLength = response.headers.get('Content-Length');
         const totalBytes = parseInt(contentLength, 10);
         let loadedBytes = 0;
@@ -621,7 +621,7 @@ async function encryptFile(file) {
         }
 
         try {
-            const aes = cbc(aesKeyBytes, iv);
+            const aes = gcm(aesKeyBytes, nonce);
             const paddedPlainBytes = aes.decrypt(encryptedBytes);
 
             // 주석 유지
@@ -646,7 +646,7 @@ async function encryptFile(file) {
             updateDownloadBtnUI(fileName);
 
         } catch (error) {
-            console.error("복호화 또는 패딩 제거 중 에러 발생:", error);
+            console.error("복호화 중 에러 발생:", error);
             downloadState[fileName] = { text: "에러 ❌", color: "#F44336", disabled: true };
             updateDownloadBtnUI(fileName);
         }
