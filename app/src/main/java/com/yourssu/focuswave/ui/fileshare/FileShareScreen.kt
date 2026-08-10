@@ -53,6 +53,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.server.FileShareUiState
 import com.yourssu.focuswave.server.LocalFileServer
+import com.yourssu.focuswave.server.SharedSourceIdentity
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -86,6 +87,7 @@ fun FileShareOverlay(
 ) {
     val context = LocalContext.current
     val fileServerManager: FileServerManager = viewModel()
+    val trustedDeviceUiState by fileServerManager.trustedDeviceUiState.collectAsState()
 
     var receivedFiles by remember {
         mutableStateOf<List<SharedFileUi>>(emptyList())
@@ -200,14 +202,6 @@ fun FileShareOverlay(
                 onStopClick = {
                     onStopClick()
                     selectedFiles = emptyList()
-                },
-                onCopyUrlClick = {
-                    clipboardManager.setText(AnnotatedString(pcAccessUrl))
-                },
-                onCopyAuthCodeClick = {
-                    uiState.authCode?.let { authCode ->
-                        clipboardManager.setText(AnnotatedString(authCode))
-                    }
                 },
                 onRefreshClick = fileServerManager::regenerateAuthCode
             )
@@ -335,6 +329,173 @@ fun FileShareOverlay(
                 )
             }
 
+            trustedDeviceUiState.pendingDevices.firstOrNull()?.let { source ->
+                TrustDevicePromptDialog(
+                    source = source,
+                    onConfirm = {
+                        fileServerManager.startTrustedDeviceNaming(source)
+                    },
+                    onDismiss = {
+                        fileServerManager.denyTrustedDevice(source)
+                    }
+                )
+            }
+
+            trustedDeviceUiState.namingDevice?.let { source ->
+                NameTrustedDeviceDialog(
+                    source = source,
+                    onSkip = fileServerManager::skipTrustedDeviceName,
+                    onConfirm = fileServerManager::confirmTrustedDeviceName
+                )
+            }
+
+        }
+    }
+}
+
+@Composable
+private fun TrustDevicePromptDialog(
+    source: SharedSourceIdentity,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF2A2F45), RoundedCornerShape(18.dp))
+                .border(
+                    BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                    RoundedCornerShape(18.dp)
+                )
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                text = "신뢰 기기 추가",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.18f), RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    text = source.displayName,
+                    color = Color(0xFFF2F1FF),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+                Text(
+                    text = source.ipAddress ?: "IP 정보를 확인할 수 없습니다.",
+                    color = Color.White.copy(alpha = 0.68f),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            Text(
+                text = "이 기기를 신뢰하면 다음 접속부터 인증 코드를 다시 입력하지 않아도 됩니다.",
+                color = Color.White.copy(alpha = 0.72f),
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+            ) {
+                TextButton(onClick = onDismiss) {
+                    Text("아니오")
+                }
+                Button(
+                    onClick = onConfirm,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF8A86E6),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("예")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NameTrustedDeviceDialog(
+    source: SharedSourceIdentity,
+    onSkip: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var deviceName by remember(source.sessionToken) {
+        mutableStateOf(source.displayName)
+    }
+
+    Dialog(onDismissRequest = onSkip) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFF2A2F45), RoundedCornerShape(18.dp))
+                .border(
+                    BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                    RoundedCornerShape(18.dp)
+                )
+                .padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(
+                text = "기기 이름",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            Text(
+                text = "이 기기에 이름을 부여하시겠습니까?",
+                color = Color.White.copy(alpha = 0.72f),
+                style = MaterialTheme.typography.bodySmall
+            )
+
+            OutlinedTextField(
+                value = deviceName,
+                onValueChange = { deviceName = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp),
+                label = {
+                    Text("기기 이름")
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color(0xFF8A86E6),
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.28f),
+                    focusedLabelColor = Color(0xFFB8B5FF),
+                    unfocusedLabelColor = Color.White.copy(alpha = 0.62f),
+                    cursorColor = Color(0xFFB8B5FF)
+                )
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)
+            ) {
+                TextButton(onClick = onSkip) {
+                    Text("건너뛰기")
+                }
+                Button(
+                    onClick = { onConfirm(deviceName) },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF8A86E6),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Text("확인")
+                }
+            }
         }
     }
 }
@@ -395,8 +556,6 @@ private fun FileShareServerCard(
     pcAccessUrl: String,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
-    onCopyUrlClick: () -> Unit,
-    onCopyAuthCodeClick: () -> Unit,
     onRefreshClick: () -> Unit
 ) {
     var isExpanded by remember { mutableStateOf(true) }
@@ -486,7 +645,7 @@ private fun FileShareServerCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        text = if (pcAccessUrl.isBlank()) {
+                        text = if (pcAccessUrl.isNullOrEmpty()) {
                             "서버를 시작하면 접속 주소가 표시됩니다."
                         } else {
                             pcAccessUrl
@@ -546,20 +705,20 @@ private fun DownloadSection(
     SectionCard {
 
         Text(
-            text = "💻 PC → 📱 폰",
+            text = "💻 서버",
             color = Color.White,
             style = MaterialTheme.typography.titleMedium
         )
 
         Text(
-            text = "PC 웹페이지에서 폰으로 보낸 파일입니다.",
+            text = "서버에 있는 파일입니다.",
             color = Color.White.copy(alpha = 0.7f),
             style = MaterialTheme.typography.bodySmall
         )
 
 
         if (receivedFiles.isEmpty()) {
-            EmptyText("아직 PC에서 받은 파일이 없습니다.")
+            EmptyText("아직 서버에 공유중인 파일이 없습니다.")
         } else {
             LazyColumn(
                 modifier = Modifier.heightIn(max = 360.dp),
@@ -594,7 +753,7 @@ private fun UploadSection(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
-                text = "📱 폰 → 💻 PC",
+                text = "📱 폰 → 💻 서버",
                 color = Color.White,
                 style = MaterialTheme.typography.titleMedium
             )
