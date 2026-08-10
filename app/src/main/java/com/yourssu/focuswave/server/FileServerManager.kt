@@ -16,10 +16,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import android.net.Uri
 import android.util.Log
 import androidx.core.content.FileProvider
+import androidx.lifecycle.viewModelScope
 import com.yourssu.focuswave.ui.fileshare.SharedFileUi
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.IOException
+import java.net.Inet6Address
+import java.net.NetworkInterface
 import java.text.Normalizer
 
 class FileServerManager(application: Application) : AndroidViewModel(application) {
@@ -28,6 +32,11 @@ class FileServerManager(application: Application) : AndroidViewModel(application
 
     private val _uiState = MutableStateFlow(FileShareUiState())
     val uiState: StateFlow<FileShareUiState> = _uiState.asStateFlow()
+    private val trustedDeviceRepository =
+        TrustedDeviceRepository.getInstance(application)
+    private val _trustedDeviceUiState = MutableStateFlow(TrustedDeviceUiState())
+    val trustedDeviceUiState: StateFlow<TrustedDeviceUiState> =
+        _trustedDeviceUiState.asStateFlow()
 
     fun startServer() {
         if (server != null) return
@@ -40,18 +49,26 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             appFilesDirectory = application.filesDir,
             authCode = authCode,
             homePage = loadHomePage(),
-            onFilesChanged = ::onSharedFilesChanged
+            onFilesChanged = ::onSharedFilesChanged,
+            findTrustedDevice = { trustedToken, ipAddress, userAgent ->
+                kotlinx.coroutines.runBlocking {
+                    trustedDeviceRepository.findTrustedDeviceByToken(
+                        trustedToken = trustedToken,
+                        ipAddress = ipAddress,
+                        userAgent = userAgent
+                    )
+                }
+            },
+            onUntrustedClientAuthenticated = ::onUntrustedClientAuthenticated
         )
         try {
             newServer.start(NanoHTTPD.SOCKET_READ_TIMEOUT, true)
             server = newServer
 
+            logNetworkInterfaces()
+
             val serverAddress = findWifiServerAddress()
-            Log.d(
-                LOG_TAG,
-                "server started: address=${serverAddress ?: "unavailable"}, " +
-                    "port=${LocalFileServer.PORT}"
-            )
+
             _uiState.value = FileShareUiState(
                 isRunning = true,
                 serverAddress = serverAddress,
@@ -72,6 +89,25 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         }
     }
 
+
+
+    private fun logNetworkInterfaces() {
+        NetworkInterface.getNetworkInterfaces()
+            .asSequence()
+            .forEach { networkInterface ->
+                networkInterface.inetAddresses
+                    .asSequence()
+                    .forEach { address ->
+                        Log.d(
+                            LOG_TAG,
+                            "interface=${networkInterface.name}, " +
+                                    "up=${networkInterface.isUp}, " +
+                                    "loopback=${networkInterface.isLoopback}, " +
+                                    "address=${address.hostAddress}"
+                        )
+                    }
+            }
+    }
     private fun onSharedFilesChanged() {
         _uiState.update { state ->
             state.copy(
@@ -263,22 +299,63 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     }
 
     private fun findWifiServerAddress(): String? {
-        val connectivityManager = getApplication<Application>()
-            .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val activeNetwork = connectivityManager.activeNetwork ?: return null
-        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork) ?: return null
-        if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return null
-
-        val linkProperties = connectivityManager.getLinkProperties(activeNetwork) ?: return null
-        val address = linkProperties.linkAddresses
-            .map { it.address }
-            .filterIsInstance<Inet4Address>()
-            .firstOrNull { !it.isLoopbackAddress }
-            ?.hostAddress
-            ?: return null
-
-        return "http://${address}:${LocalFileServer.PORT}"
+        findReachablePrivateIpv4Address()
+            ?.let { return "http://${it}:${LocalFileServer.PORT}" }
+        findReachableGlobalIpv6Address()
+            ?.let { return "http://[${it}]:${LocalFileServer.PORT}" }
+        return null
     }
+
+
+    private fun findReachablePrivateIpv4Address(): String? {
+        return NetworkInterface.getNetworkInterfaces()
+            .asSequence()
+            .filter {
+                it.isUp && !it.isLoopback
+            }.flatMap { networkInterface ->
+                networkInterface.inetAddresses
+                    .asSequence()
+                    .filterIsInstance<Inet4Address>()
+                    .filter { !
+                    it.isLoopbackAddress }
+                    .map { address ->
+                        networkInterface.name to address.hostAddress }
+            }
+            .filter { (_, address) ->
+                address.isPrivateIpv4()
+            }.sortedBy { (interfaceName, _) ->
+                when {
+                    interfaceName.startsWith("wlan") -> 0
+                            interfaceName.startsWith("ap") -> 1
+                            interfaceName.startsWith("swlan") -> 2
+                            interfaceName.startsWith("rndis") -> 3
+                        else -> 10
+                }
+            }
+            .firstOrNull()
+            ?.second
+    }
+
+    private fun findReachableGlobalIpv6Address(): String? {
+        return NetworkInterface.getNetworkInterfaces()
+            .asSequence()
+            .filter { it.isUp && !it.isLoopback }
+            .filterNot { it.name.startsWith("dummy") }
+            .flatMap { networkInterface ->
+                networkInterface.inetAddresses.asSequence()
+                    .filterIsInstance<Inet6Address>()
+                    .filter { !it.isLoopbackAddress }
+                    .filter { !it.isLinkLocalAddress }
+                    .map { it.hostAddress.substringBefore('%') }
+            }
+            .firstOrNull()
+    }
+
+    private fun String.isPrivateIpv4(): Boolean
+            = startsWith("10.") ||
+            startsWith("192.168.") ||
+            Regex("""^172\.(1[6-9]|2\d|3[0-1])\.""").containsMatchIn(this)
+
 
     fun saveUploadedFileToUri(file: SharedFileUi, destinationUri: Uri) {
         val application = getApplication<Application>()
@@ -294,6 +371,81 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         }
     }
 
+    private fun onUntrustedClientAuthenticated(source: SharedSourceIdentity) {
+        _trustedDeviceUiState.update { state ->
+            if (state.pendingDevices.any { it.sessionToken == source.sessionToken }) {
+                state
+            } else {
+                val updatedPendingDevices = state.pendingDevices.toMutableList()
+                updatedPendingDevices.add(source)
+
+                state.copy(
+                    pendingDevices = updatedPendingDevices
+                )
+            }
+        }
+    }
+
+    fun denyTrustedDevice(source: SharedSourceIdentity) {
+        _trustedDeviceUiState.update { state ->
+            val updatedPendingDevices = state.pendingDevices.toMutableList()
+            updatedPendingDevices.removeAll {
+                it.sessionToken == source.sessionToken
+            }
+            state.copy(
+                pendingDevices = updatedPendingDevices
+            )
+        }
+    }
+
+    fun startTrustedDeviceNaming(source: SharedSourceIdentity) {
+        _trustedDeviceUiState.update { state ->
+            val updatedPendingDevices = state.pendingDevices.toMutableList()
+            updatedPendingDevices.removeAll {
+                it.sessionToken == source.sessionToken
+            }
+            state.copy(
+                pendingDevices = updatedPendingDevices,
+                namingDevice = source
+            )
+
+        }
+    }
+
+    fun skipTrustedDeviceName() {
+        val source = _trustedDeviceUiState.value.namingDevice ?: return
+        saveTrustedDevice(source, source.displayName)
+    }
+
+    fun confirmTrustedDeviceName(displayName: String) {
+        val source = _trustedDeviceUiState.value.namingDevice ?: return
+        val trimmedName = displayName.trim()
+        saveTrustedDevice(
+            source = source,
+            displayName = trimmedName.ifBlank { source.displayName }
+        )
+    }
+
+    private fun saveTrustedDevice(source: SharedSourceIdentity, displayName: String) {
+        viewModelScope.launch {
+            val trustedToken = TrustedDeviceTokens.generateToken(secureRandom)
+
+            trustedDeviceRepository.trustDevice(
+                trustedToken = trustedToken,
+                displayName = displayName,
+                userAgent = source.userAgent,
+                ipAddress = source.ipAddress
+            )
+
+            source.sessionToken?.let { sessionToken ->
+                server?.grantTrustedDevice(sessionToken, trustedToken)
+            }
+
+            _trustedDeviceUiState.update { state ->
+                state.copy(namingDevice = null)
+            }
+        }
+    }
 
     fun regenerateAuthCode() {
         stopServer()

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -54,6 +55,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
+import com.yourssu.focuswave.ui.chat.ChatOverlay
 import com.yourssu.focuswave.ui.components.SoundMixerPanel
 import com.yourssu.focuswave.ui.fileshare.FileShareOverlay
 import com.yourssu.focuswave.ui.sound.SoundPlaybackEffect
@@ -64,12 +66,17 @@ import com.yourssu.focuswave.ui.theme.FocusWaveTheme
 import com.yourssu.focuswave.ui.timer.TimerViewModel
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Message
+import androidx.compose.material.icons.filled.Message
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Icon
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -95,6 +102,7 @@ fun MainScreen(
     val uiState by timerViewModel.uiState.collectAsState()
     val fileShareUiState by fileServerManager.uiState.collectAsState()
     var showFileShare by rememberSaveable { mutableStateOf(false) }
+    var showChat by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val activity = context as? Activity
 
@@ -117,6 +125,7 @@ fun MainScreen(
             onResetClick = timerViewModel::resetTimer,
             onNewPathClick = timerViewModel::increasePathSeed,
             onFileShareClick = { showFileShare = true },
+            onChatClick = { showChat = true },
             timerViewModel = timerViewModel,
             onSoundEnabledChange = timerViewModel::setSoundEnabled,
             onSoundVolumeChange = timerViewModel::setSoundVolume
@@ -130,6 +139,15 @@ fun MainScreen(
                 onDismiss = { showFileShare = false }
             )
         }
+
+        if (showChat) {
+            ChatOverlay(
+                uiState = fileShareUiState,
+                onStartClick = fileServerManager::startServer,
+                onStopClick = fileServerManager::stopServer,
+                onDismiss = { showChat = false }
+            )
+        }
     }
 }
 
@@ -141,6 +159,7 @@ private fun MainScreenContent(
     onResetClick: () -> Unit,
     onNewPathClick: () -> Unit,
     onFileShareClick: () -> Unit,
+    onChatClick: () -> Unit,
     timerViewModel: TimerViewModel,
     onSoundEnabledChange: (SoundTrackId, Boolean) -> Unit,
     onSoundVolumeChange: (SoundTrackId, Float) -> Unit,
@@ -163,6 +182,7 @@ private fun MainScreenContent(
                 onResetClick = onResetClick,
                 onNewPathClick = onNewPathClick,
                 onFileShareClick = onFileShareClick,
+                onChatClick = onChatClick,
                 onDecreaseFocus = timerViewModel::decreaseFocusMinutes,
                 onIncreaseFocus = timerViewModel::increaseFocusMinutes,
                 onDecreaseBreak = timerViewModel::decreaseBreakMinutes,
@@ -263,6 +283,7 @@ private fun TimerControlsPanel(
     onResetClick: () -> Unit,
     onNewPathClick: () -> Unit,
     onFileShareClick: () -> Unit,
+    onChatClick: () -> Unit,
     onDecreaseFocus: () -> Unit,
     onIncreaseFocus: () -> Unit,
     onDecreaseBreak: () -> Unit,
@@ -312,35 +333,26 @@ private fun TimerControlsPanel(
             }
 
             Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.weight(2f),
+                horizontalArrangement = Arrangement
+                    .spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                ElevatedButton(
+                TimerActionButton(
                     onClick = onFileShareClick,
-                    modifier = modifier
-                        .width(120.dp)
-                        .height(44.dp)
-                        .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)), shape),
-                    shape = shape,
-                    elevation = ButtonDefaults.elevatedButtonElevation(
-                        defaultElevation = 5.dp,
-                        pressedElevation = 1.dp,
-                        hoveredElevation = 7.dp,
-                        focusedElevation = 7.dp
-                    ),
-                    colors = ButtonDefaults.elevatedButtonColors(
-                        containerColor = Color.White.copy(alpha = 0.2f),
-                        contentColor = Color.White,
-                        disabledContainerColor = Color.White.copy(alpha = 0.1f),
-                        disabledContentColor = Color.White.copy(alpha = 0.42f)
-                    ),
-                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
-                ) {
-                    Text(
-                        "File Sharing"
-                    )
-                }
+                    modifier = Modifier,
+                    icon = Icons.Default.SwapHoriz
+                )
+                TimerActionButton(
+                    onClick = onChatClick,
+                    modifier = Modifier,
+                    icon = Icons.AutoMirrored.Filled.Message
+                )
+                TimerActionButton(
+                    onClick = {  },
+                    modifier = Modifier,
+                    icon = Icons.Default.Settings
+                )
             }
 
             Row(
@@ -554,14 +566,13 @@ private fun TimerActionButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true
 ) {
-    val shape = RoundedCornerShape(6.dp)
+    val shape = CircleShape
 
     ElevatedButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier
-            .width(44.dp)
-            .height(44.dp)
+            .size(44.dp)
             .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)), shape),
         shape = shape,
         elevation = ButtonDefaults.elevatedButtonElevation(
@@ -646,6 +657,7 @@ fun MainScreenPreview() {
                     onResetClick = {},
                     onNewPathClick = {},
                     onFileShareClick = {},
+                    onChatClick = {},
                     onIncreaseBreak = {},
                     onIncreaseFocus = {},
                     onDecreaseFocus = {},

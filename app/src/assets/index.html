@@ -22,6 +22,7 @@
 
         .container {
             display: none;
+            flex-wrap: wrap;
             gap: 20px;
             width: 100%;
             max-width: 800px;
@@ -31,8 +32,18 @@
             background-color: rgba(255, 255, 255, 0.05);
             border-radius: 16px;
             padding: 24px;
-            flex: 1;
+            flex: 1 0 300px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        @media (max-width: 700px) {
+            .card {
+                background-color: rgba(255, 255, 255, 0.05);
+                border-radius: 16px;
+                padding: 24px;
+                flex: 0 0 100%;
+                box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+            }
         }
 
         button {
@@ -47,9 +58,9 @@
             width: 100%;
         }
 
-            button:hover {
-                background-color: #d87b77;
-            }
+        button:hover {
+            background-color: #d87b77;
+        }
 
         input[type="file"] {
             margin-bottom: 10px;
@@ -100,7 +111,7 @@
             align-items: center;
             gap: 10px;
             cursor: pointer;
-            flex: 1 1 180px;
+            flex: 1 0 180px;
             min-width: 0;
         }
 
@@ -148,7 +159,8 @@
         }
 
         #authStatus,
-        #uploadStatus {
+        #uploadStatus,
+        #chatStatus {
             font-size: 12px;
             color: #E68A86;
         }
@@ -176,6 +188,113 @@
                 font-weight: bold;
                 color: #ccc;
             }
+
+        .chat-card {
+            flex: 1 1 100%;
+        }
+
+        .chat-window {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-height: 360px;
+            max-height: 520px;
+            background: rgba(0, 0, 0, 0.18);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 14px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .chat-message-row {
+            display: flex;
+        }
+
+        .chat-message-row.mine {
+            justify-content: flex-end;
+        }
+
+        .chat-bubble {
+            max-width: min(72%, 460px);
+            padding: 10px 14px;
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.12);
+            color: #FFFFFF;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+
+        .chat-message-row.mine .chat-bubble {
+            background: #8A86E6;
+            border-bottom-right-radius: 4px;
+        }
+
+        .chat-message-row:not(.mine) .chat-bubble {
+            border-bottom-left-radius: 4px;
+        }
+
+        .chat-input-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 10px;
+        }
+
+        #chatInput {
+            flex: 1;
+            min-height: 44px;
+            max-height: 120px;
+            resize: vertical;
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 18px;
+            background: rgba(255, 255, 255, 0.08);
+            color: #FFFFFF;
+            padding: 12px 14px;
+            box-sizing: border-box;
+            font-family: inherit;
+            font-size: 15px;
+            outline: none;
+        }
+
+        #chatInput:focus {
+            border-color: #8A86E6;
+        }
+
+        .chat-send-button {
+            width: 48px;
+            height: 48px;
+            margin-top: 0;
+            padding: 0;
+            border-radius: 50%;
+            background: #8A86E6;
+            font-size: 18px;
+            flex: 0 0 auto;
+        }
+
+        .chat-send-button:hover {
+            background: #7773d8;
+        }
+
+        @media (max-width: 560px) {
+            body {
+                padding: 24px 14px;
+            }
+
+            .card {
+                padding: 18px;
+            }
+
+            .chat-bubble {
+                max-width: 84%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -202,7 +321,7 @@
 
 <div class="container" id="fileShareContainer">
     <div class="card">
-        <h2>💻 PC ➡️ 📱 폰</h2>
+        <h2>💻 파일 업로드</h2>
         <p>폰으로 보낼 파일을 선택하거나 아래 영역에 끌어다 놓으세요.</p>
 
         <!-- 💡 새롭게 추가된 드롭존 영역 -->
@@ -218,7 +337,7 @@
     </div>
 
     <div class="card">
-        <h2>📱 폰 ➡️ 💻 PC</h2>
+        <h2>📱 파일 다운로드</h2>
         <p>현재 폰에서 공유 중인 파일 목록입니다.</p>
 
         <div class="action-bar">
@@ -235,11 +354,31 @@
             <li>아직 불러온 파일이 없습니다.</li>
         </ul>
     </div>
+
+    <div class="card chat-card">
+        <h2>💬 로컬 채팅</h2>
+        <p>같은 Wi-Fi에 연결된 기기와 임시 메시지를 주고받는 공간입니다.</p>
+
+        <div class="chat-window">
+            <div id="chatMessages" class="chat-messages" aria-live="polite">
+                <div class="chat-message-row">
+                    <div class="chat-bubble">채팅 연결 준비 중입니다.</div>
+                </div>
+            </div>
+
+            <div class="chat-input-row">
+                <textarea id="chatInput" rows="1" placeholder="메시지 입력"></textarea>
+                <button class="chat-send-button" onclick="sendChatMessage()" aria-label="메시지 보내기">➤</button>
+            </div>
+        </div>
+
+        <p id="chatStatus"></p>
+    </div>
 </div>
 
 <script type="module">
     import { x25519 } from "https://esm.sh/@noble/curves@1.9.7/ed25519?bundle";
-    import { cbc } from "https://esm.sh/@noble/ciphers@1.3.0/aes?bundle"; //
+    import { cbc, gcm } from "https://esm.sh/@noble/ciphers@1.3.0/aes?bundle";
     import { hkdf } from "https://esm.sh/@noble/hashes@1.8.0/hkdf?bundle";
     import { sha256 } from "https://esm.sh/@noble/hashes@1.8.0/sha2?bundle";
 
@@ -248,27 +387,28 @@
     let clientPrivateKey = null;
     let clientPublicKey = null;
     let aesKeyBytes = null;
+    let trustedDeviceEvents = null;
+    let trustedDeviceClaimInProgress = false;
     const textEncoder = new TextEncoder();
     const textDecoder = new TextDecoder();
 
     const downloadState = {};
+    let chatMessageId = 1;
 
     function updateDownloadBtnUI(fileName) {
-        const btns = document.querySelectorAll('.file-download');
-        btns.forEach(btn => {
-            if (btn.getAttribute('data-filename') === fileName) {
-                const state = downloadState[fileName];
-                if (state) {
-                    btn.textContent = state.text;
-                    btn.style.color = state.color;
-                    btn.style.pointerEvents = state.disabled ? "none" : "auto";
-                } else {
-                    btn.textContent = "다운로드 ⬇️";
-                    btn.style.color = "";
-                    btn.style.pointerEvents = "auto";
-                }
-            }
-        });
+        const btn = document.querySelector(
+            `.file-download[data-filename="${fileName}"]`
+        )
+        const state = downloadState[fileName];
+        if (state) {
+                btn.textContent = state.text;
+                btn.style.color = state.color;
+                btn.style.pointerEvents = state.disabled ? "none" : "auto";
+        } else {
+                btn.textContent = "다운로드 ⬇️";
+                btn.style.color = "";
+                btn.style.pointerEvents = "auto";
+        }
     }
 
     function bytesToBase64(bytes) {
@@ -293,12 +433,12 @@
     }
 
     function deriveAesKey(sharedSecret) {
-        return hkdf(
-            sha256,
+        return hkdf(  // HMAC-based Key Derivation Function
+            sha256,  // HKDF에서 사용할 해시 함수
             sharedSecret,
-            textEncoder.encode("FocusWave FileShare Salt"),
-            textEncoder.encode("FocusWave ECDH AES-CBC v1"),
-            32
+            textEncoder.encode("FocusWave FileShare Salt"),   // 랜덤 Key Salt값
+            textEncoder.encode("FocusWave ECDH AES-CBC v1"),  //
+            32  // 출력 키 길이 32바이트 = 256비트
         );
     }
 
@@ -331,24 +471,26 @@
         padded.set(data);
         padded.fill(padLength, data.length);
         return padded;
-        }
+    }
 
-        async function encryptFileName(fileName) {
-            const iv = randomBytes(16);
-            const plainBytes = textEncoder.encode(fileName);
-            if (plainBytes.length > 256) throw new Error("File name too long");
-            const padded256Bytes = new Uint8Array(256);
-            padded256Bytes.set(plainBytes);
-            const finalPaddedBytes = pkcs7Pad(padded256Bytes);
 
-            const aes = cbc(aesKeyBytes, iv);
-            const encryptedBytes = aes.encrypt(finalPaddedBytes);
 
-            return {
-                encryptedBase64: bytesToBase64(encryptedBytes),
-                metaNonceBase64: bytesToBase64(iv)
-            };
-        }
+    async function encryptFileName(fileName) {
+        const nonce = randomBytes(12);
+        const plainBytes = textEncoder.encode(fileName);
+        if (plainBytes.length > 256) throw new Error("File name too long");
+        const padded256Bytes = new Uint8Array(256);
+        padded256Bytes.set(plainBytes);
+        const finalPaddedBytes = pkcs7Pad(padded256Bytes);
+
+        const aes = gcm(aesKeyBytes, nonce);
+        const encryptedBytes = aes.encrypt(finalPaddedBytes);
+
+        return {
+            encryptedBase64: bytesToBase64(encryptedBytes),
+            metaNonceBase64: bytesToBase64(nonce)
+        };
+    }
 
 
     function decryptFileName(encryptedBase64, nonceBase64) {
@@ -358,7 +500,7 @@
         const aes = cbc(aesKeyBytes, iv);
         const decryptedWithPadding = aes.decrypt(encryptedBytes);
 
-    // 1. PKCS7 패딩 찌꺼기 우선 제거 (272바이트 -> 256바이트로 복원)
+        // 1. PKCS7 패딩 찌꺼기 우선 제거 (272바이트 -> 256바이트로 복원)
         const padded256Bytes = pkcs7Unpad(decryptedWithPadding);
 
         let actualLength = padded256Bytes.indexOf(0);
@@ -367,32 +509,31 @@
         const plainBytes = padded256Bytes.slice(0, actualLength);
 
         return textDecoder.decode(plainBytes);
-}
-
-
-    async function encryptFile(file) {
-        if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
-
-        // 브라우저 렌더링 멈춤 방지
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // CBC 모드는 16바이트 IV를 사용합니다.
-        const iv = randomBytes(16);
-        const plainBuffer = await file.arrayBuffer();
-        const plainBytes = new Uint8Array(plainBuffer);
-
-        // 데이터 길이를 16배수로 맞추기 위해 패딩 적용
-        // const paddedBytes = pkcs7Pad(plainBytes);
-
-        // noble/ciphers의 cbc 모드 적용
-        const aes = cbc(aesKeyBytes, iv);
-        const encryptedBytes = aes.encrypt(plainBytes);
-
-        return {
-            encryptedBlob: new Blob([encryptedBytes]),
-            nonceBase64: bytesToBase64(iv)
-        };
     }
+
+
+async function encryptFile(file) {
+    if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
+
+    // 브라우저 렌더링 멈춤 방지
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // GCM에서는 일반적으로 12바이트 nonce 사용
+    const nonce = randomBytes(12);
+
+    // 파일 전체를 메모리에 읽음
+    const plainBuffer = await file.arrayBuffer();
+    const plainBytes = new Uint8Array(plainBuffer);
+
+    // AES-GCM 암호화
+    const aes = gcm(aesKeyBytes, nonce);
+    const encryptedBytes = aes.encrypt(plainBytes);
+
+    return {
+        encryptedBlob: new Blob([encryptedBytes]),
+        nonceBase64: bytesToBase64(nonce)
+    };
+}
 
     function pkcs7Unpad(data) {
         const padLength = data[data.length - 1];
@@ -500,14 +641,9 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            // 💡 다운로드 완료 처리 및 2초 뒤 장부에서 삭제
-            downloadState[fileName] = { text: "완료 ✅", color: "#4CAF50", disabled: true };
-            updateDownloadBtnUI(fileName);
 
-            setTimeout(() => {
-                delete downloadState[fileName];
-                updateDownloadBtnUI(fileName);
-            }, 2000);
+            downloadState[fileName] = { text: "다운로드 ✅", color: "#4CAF50", disabled: false };
+            updateDownloadBtnUI(fileName);
 
         } catch (error) {
             console.error("복호화 또는 패딩 제거 중 에러 발생:", error);
@@ -519,8 +655,6 @@
     async function verifyCode() {
         const codeInput = document.getElementById('authCodeInput');
         const authStatus = document.getElementById('authStatus');
-        const authCard = document.getElementById('authCard');
-        const fileShareContainer = document.getElementById('fileShareContainer');
         const code = codeInput.value.trim();
 
         if (code.length !== 6) {
@@ -541,21 +675,7 @@
             if (response.ok) {
                 authStatus.innerText = "보안 연결 설정 중...";
                 await setupEncryption();
-
-                isAuthenticated = true;
-                clearFileShareUi();
-                authCard.style.display = "none";
-                fileShareContainer.style.display = "flex";
-
-                fetchFileList();
-
-                if (fileListRefreshTimer !== null) {
-                    clearInterval(fileListRefreshTimer);
-                }
-
-                fileListRefreshTimer = setInterval(() => {
-                    fetchFileList();
-                }, 2000);
+                enterAuthenticatedState();
 
             } else {
                 let errorData;
@@ -581,6 +701,49 @@
             }
         } catch (error) {
             authStatus.innerText = "서버(폰)에 연결할 수 없습니다. Wi-Fi 상태를 확인해 주세요.";
+        }
+    }
+
+    function enterAuthenticatedState() {
+        isAuthenticated = true;
+        clearFileShareUi();
+        clearChatUi();
+
+        document.getElementById('authCard').style.display = "none";
+        document.getElementById('fileShareContainer').style.display = "flex";
+
+        fetchFileList();
+
+        if (fileListRefreshTimer !== null) {
+            clearInterval(fileListRefreshTimer);
+        }
+
+        fileListRefreshTimer = setInterval(() => {
+            fetchFileList();
+        }, 2000);
+
+        startTrustedDeviceEvents();
+    }
+
+    async function tryTrustedAuth() {
+        try {
+            const response = await fetch("/auth/trusted", {
+                method: "POST",
+                credentials: "same-origin"
+            });
+
+            if (!response.ok) {
+                console.info("Trusted auth skipped:", response.status);
+                return false;
+            }
+
+            await setupEncryption();
+            enterAuthenticatedState();
+            console.info("Trusted auth succeeded");
+            return true;
+        } catch (error) {
+            console.info("Trusted auth failed:", error);
+            return false;
         }
     }
 
@@ -806,6 +969,11 @@
         clientPublicKey = null;
         aesKeyBytes = null;
 
+        if (trustedDeviceEvents !== null) {
+            trustedDeviceEvents.close();
+            trustedDeviceEvents = null;
+        }
+
         if (fileListRefreshTimer !== null) {
             clearInterval(fileListRefreshTimer);
             fileListRefreshTimer = null;
@@ -833,6 +1001,115 @@
         }
     }
 
+    function clearChatUi() {
+        const chatMessages = document.getElementById('chatMessages');
+        const chatInput = document.getElementById('chatInput');
+        const chatStatus = document.getElementById('chatStatus');
+
+        chatMessageId = 1;
+
+        if (chatInput) chatInput.value = "";
+        if (chatStatus) chatStatus.innerText = "";
+
+        if (chatMessages) {
+            chatMessages.innerHTML = "";
+            appendChatMessage("채팅 연결 준비 중입니다.", false);
+        }
+    }
+
+    function appendChatMessage(text, isMine) {
+        const chatMessages = document.getElementById('chatMessages');
+        if (!chatMessages) return;
+
+        const row = document.createElement('div');
+        row.className = isMine ? "chat-message-row mine" : "chat-message-row";
+        row.dataset.messageId = String(chatMessageId++);
+
+        const bubble = document.createElement('div');
+        bubble.className = "chat-bubble";
+        bubble.textContent = text;
+
+        row.appendChild(bubble);
+        chatMessages.appendChild(row);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function sendChatMessage() {
+        if (!isAuthenticated) {
+            alert("먼저 인증 코드를 입력해주세요.");
+            return;
+        }
+
+        const chatInput = document.getElementById('chatInput');
+        const chatStatus = document.getElementById('chatStatus');
+        if (!chatInput) return;
+
+        const message = chatInput.value.trim();
+        if (!message) return;
+
+        appendChatMessage(message, true);
+        chatInput.value = "";
+
+        if (chatStatus) {
+            chatStatus.innerText = "채팅 서버 API 연결 전입니다. 현재 화면에만 표시됩니다.";
+        }
+    }
+
+    function startTrustedDeviceEvents() {
+        if (trustedDeviceEvents !== null) {
+            trustedDeviceEvents.close();
+        }
+        trustedDeviceClaimInProgress = false;
+        trustedDeviceEvents = new EventSource("/trusted-device/events");
+
+        trustedDeviceEvents.onopen = () => {
+            console.info("Trusted device event stream connected");
+        };
+
+        trustedDeviceEvents.addEventListener("trusted-device-approved", (event) => {
+            console.info("Trusted device approved event received:", event.data);
+            claimTrustedDevice();
+        });
+
+        trustedDeviceEvents.onmessage = (event) => {
+            console.info("Trusted device event message received:", event.data);
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === "trusted-device-approved") {
+                    claimTrustedDevice();
+                }
+            } catch (error) {
+                console.info("Trusted device event message ignored:", event.data);
+            }
+        };
+
+        trustedDeviceEvents.onerror = () => {
+            console.error("Trusted device event stream disconnected");
+        };
+    }
+
+    async function claimTrustedDevice() {
+        if (trustedDeviceClaimInProgress) return;
+        trustedDeviceClaimInProgress = true;
+
+        try {
+            const response = await fetch("/trusted-device/claim", {
+                method: "POST",
+                credentials: "same-origin"
+            });
+
+            if (!response.ok) {
+                console.error("Trusted device claim failed:", response.status);
+                trustedDeviceClaimInProgress = false;
+            } else {
+                console.info("Trusted device claim succeeded");
+            }
+        } catch (error) {
+            console.error("Trusted device claim failed:", error);
+            trustedDeviceClaimInProgress = false;
+        }
+    }
+
     document.getElementById('authCodeInput').addEventListener('keyup', function (event) {
         if (event.key === "Enter") {
             verifyCode();
@@ -844,6 +1121,8 @@
     window.toggleSelectAll = toggleSelectAll;
     window.downloadSelected = downloadSelected;
     window.downloadEncryptedFile = downloadEncryptedFile;
+    window.sendChatMessage = sendChatMessage;
+    tryTrustedAuth();
     checkConnection();
     setInterval(checkConnection, 3000);
 
@@ -880,6 +1159,16 @@
             uploadStatus.style.color = "#4CAF50";
         }
     });
+
+    const chatInput = document.getElementById('chatInput');
+    if (chatInput) {
+        chatInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendChatMessage();
+            }
+        });
+    }
     // ------------------------------------
 </script>
 </body>

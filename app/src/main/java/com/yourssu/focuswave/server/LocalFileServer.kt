@@ -8,6 +8,7 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.URLConnection
@@ -18,6 +19,7 @@ import java.security.SecureRandom
 import java.text.Normalizer
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.LinkedBlockingQueue
 import javax.crypto.SecretKey
 
 
@@ -27,14 +29,25 @@ class LocalFileServer(
     private val authCode: String,
     private val homePage: String? = null,
     private val secureRandom: SecureRandom = SecureRandom(),
-    private val onFilesChanged: (() -> Unit)? = null
+    private val onFilesChanged: (() -> Unit)? = null,
+    private val findTrustedDevice: ((
+            trustedToken: String,
+            ipAddress: String?,
+            userAgent: String?
+            ) -> TrustedDeviceEntity?)? = null,
+    private val onUntrustedClientAuthenticated: ((SharedSourceIdentity) -> Unit) ? = null
 ) : NanoHTTPD(port) {
     private val fileSaveLock = Any()
     private val activeTokens = ConcurrentHashMap.newKeySet<String>()
 
+    private val fileOwners = ConcurrentHashMap<String, SharedFileOwner>()  // key-file name, value-owner
+    private val clientSessions = ConcurrentHashMap<String, SharedSourceIdentity>()  // key-session token, value-id
+    private val pendingTrustedTokenGrants = ConcurrentHashMap<String, String>() // key-session Token, value-trusted Token
+    private val trustedDeviceEventStreams = ConcurrentHashMap<String, SseEventStream>() // key-session token, value-해당 브라우저의 sse 출력 스트림
+
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private val serverKeyPair = FileShareCrypto.generateServerKeyPair()
-    private val clientAesKeys = ConcurrentHashMap<String, SecretKey>()
+    private val clientAesKeys = ConcurrentHashMap<String, SecretKey>()  // key : token, value : aes key
     private val authAttempts = ConcurrentHashMap<String, AuthAttempt>()
 
     private data class AuthAttempt(
@@ -57,7 +70,9 @@ class LocalFileServer(
                 Response.Status.OK,
                 "text/html; charset=utf-8",
                 homePage ?: FALLBACK_HOME_PAGE
-            )
+            ).apply {
+                addNoStoreHeaders()
+            }
 
             session.uri == "/ping" && session.method == Method.GET -> jsonResponse(
                 Response.Status.OK,
@@ -68,7 +83,7 @@ class LocalFileServer(
 
             session.uri == "/list" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
-                session.method == Method.GET -> handleList()
+                session.method == Method.GET -> handleList(session)
                 else -> methodNotAllowedResponse()
             }
 
@@ -96,6 +111,23 @@ class LocalFileServer(
             session.uri == "/crypto/exchange" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
                 session.method == Method.POST -> handleCryptoExchange(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            session.uri == "/trusted-device/events" -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.GET -> handleTrustedDeviceEvents(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            session.uri == "/trusted-device/claim" -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.POST -> handleTrustedDeviceClaim(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            session.uri == "/auth/trusted" -> when {
+                session.method == Method.POST -> handleTrustedAuth(session)
                 else -> methodNotAllowedResponse()
             }
 
@@ -170,8 +202,74 @@ class LocalFileServer(
 
         authAttempts.remove(clientIp)
 
+        val trustedToken = getTrustDeviceToken(session)
+        val trustedDevice = trustedToken?.let {
+            findTrustedDevice?.invoke(it, clientIp, userAgent)
+        }
+
+        return issueSessionResponse(
+            identityKind = if (trustedDevice != null) {
+                SharedSourceKind.TRUSTED_DEVICE
+            } else {
+                SharedSourceKind.SESSION_ONLY
+            },
+            trustedDevice = trustedDevice,
+            clientIp = clientIp,
+            userAgent = userAgent
+        )
+    }
+
+    private fun handleTrustedAuth(session: IHTTPSession): Response {
+        val clientIp = session.remoteIpAddress ?: "unknown"
+        val userAgent = session.headers["user-agent"] ?: "Unknown Device"
+
+        val trustedToken = getTrustDeviceToken(session)
+            ?: return unauthorizedResponse("Trusted device token is required").also {
+                logDebug("trusted auth failed: missing trusted token")
+            }
+
+        val trustedDevice = findTrustedDevice?.invoke(
+            trustedToken,
+            clientIp,
+            userAgent
+        ) ?: return unauthorizedResponse("Trusted device is not recognized").also {
+            logDebug("trusted auth failed: token not recognized")
+        }
+
+        logDebug("trusted auth succeeded: deviceId=${trustedDevice.id}")
+
+        return issueSessionResponse(
+            identityKind = SharedSourceKind.TRUSTED_DEVICE,
+            trustedDevice = trustedDevice,
+            clientIp = clientIp,
+            userAgent = userAgent
+        )
+    }
+
+    private fun issueSessionResponse(
+        identityKind: SharedSourceKind,
+        trustedDevice: TrustedDeviceEntity?,
+        clientIp: String,
+        userAgent: String
+    ): Response {
         val token = generateToken()
         activeTokens.add(token)
+
+        val clientIdentity = SharedSourceIdentity(
+            kind = identityKind,
+            sessionToken = token,
+            trustedDeviceId = trustedDevice?.id,
+            displayName = trustedDevice?.displayName ?: getDeviceFriendlyName(userAgent),
+            ipAddress = clientIp,
+            userAgent = userAgent
+        )
+
+        clientSessions[token] = clientIdentity
+
+        if (clientIdentity.kind == SharedSourceKind.SESSION_ONLY) {
+            onUntrustedClientAuthenticated?.invoke(clientIdentity)
+        }
+
         logDebug("authentication succeeded")
         return jsonResponse(
             Response.Status.OK,
@@ -182,6 +280,75 @@ class LocalFileServer(
                 "$TOKEN_COOKIE_NAME=$token; Path=/; HttpOnly; SameSite=Strict"
             )
         }
+    }
+
+
+    private fun handleTrustedDeviceClaim(session: IHTTPSession): Response {
+        val sessionToken = getRequestToken(session)
+            ?: return unauthorizedResponse()
+
+        val trustedToken = pendingTrustedTokenGrants.remove(sessionToken)
+            ?: return jsonError(Response.Status.NOT_FOUND, "No trusted device grant is pending").also {
+                logDebug("trusted device claim failed: no pending grant")
+            }
+
+        logDebug("trusted device claim succeeded")
+        return jsonResponse(
+            Response.Status.OK,
+            """{"success":true}"""
+        ).apply {
+            addHeader(
+                "Set-Cookie",
+                "$TRUSTED_DEVICE_COOKIE_NAME=$trustedToken; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000"
+            )
+            addNoStoreHeaders()
+        }
+    }
+
+    private fun handleTrustedDeviceEvents(session: IHTTPSession): Response {
+        val sessionToken = getRequestToken(session)
+            ?: return unauthorizedResponse()
+
+        val stream = SseEventStream()
+        trustedDeviceEventStreams[sessionToken] = stream
+        logDebug("trusted event stream registered: sessionToken=$sessionToken")
+
+        stream.sendComment("connected")
+        stream.sendMessage("""{"type":"connected"}""")
+
+        if (pendingTrustedTokenGrants.containsKey(sessionToken)) {
+            notifyTrustedDeviceApproved(sessionToken)
+        }
+
+        return SseResponse(stream)
+    }
+
+
+    fun notifyTrustedDeviceApproved(sessionToken: String) {
+        val stream = trustedDeviceEventStreams[sessionToken]
+        if (stream == null) {
+            logDebug("trusted approved event skipped: no stream for sessionToken=$sessionToken")
+            return
+        }
+        runCatching {
+            stream.sendEvent("trusted-device-approved", "{}")
+            stream.sendMessage("""{"type":"trusted-device-approved"}""")
+            logDebug("trusted approved event sent: sessionToken=$sessionToken")
+        }.onFailure {
+            logDebug("trusted approved event failed: ${it.message}")
+            trustedDeviceEventStreams.remove(sessionToken)
+        }
+    }
+
+    private fun getTrustDeviceToken(session: IHTTPSession): String? {
+        return session.headers["cookie"]
+            ?.split(';')
+            ?.asSequence()
+            ?.map {it.trim()  }
+            ?.firstOrNull { it.startsWith("$TRUSTED_DEVICE_COOKIE_NAME=") }
+            ?.substringAfter('=')
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
     }
 
     fun getDeviceFriendlyName(userAgent: String?): String {
@@ -340,8 +507,16 @@ class LocalFileServer(
         "Method not allowed"
     )
 
-    private fun handleList(): Response = try {
+    private fun handleList(session: IHTTPSession): Response = try {
+        val requestSource = getRequestSource(session)
+
         val files = listSharedFiles()
+            .filter { file ->
+                val owner = fileOwners[file.name]
+                !isSameSource(owner?.source, requestSource)
+                        && !file.name.endsWith(".tmp")
+            }
+
         logDebug("file list requested: count=${files.size}")
         jsonResponse(
             Response.Status.OK,
@@ -350,6 +525,25 @@ class LocalFileServer(
     } catch (error: IOException) {
         logDebug("file list failed: ${error.message}")
         jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file list")
+    }
+
+    private fun getRequestSource(session: IHTTPSession): SharedSourceIdentity? {
+        val token = getRequestToken(session) ?: return null
+        return clientSessions[token]
+    }
+
+    private fun isSameSource(
+        first: SharedSourceIdentity?,
+        second: SharedSourceIdentity?
+    ): Boolean {
+        if (first == null || second == null) return false
+        if (first.trustedDeviceId != null && second.trustedDeviceId != null) {
+            return first.trustedDeviceId == second.trustedDeviceId
+        }
+        if (first.sessionToken != null && second.sessionToken != null) {
+            return first.sessionToken == second.sessionToken
+        }
+        return false
     }
 
     private fun handleDownload(session: IHTTPSession): Response =
@@ -502,6 +696,10 @@ class LocalFileServer(
             // contentLength 크기만큼만 읽고 종료하는 스트림
             val boundedStream = BoundedInputStream(session.inputStream, contentLength)
 
+            val token =
+                getRequestToken(session)
+                    ?: return unauthorizedResponse()
+
             val storedFile = saveUploadedFileStream(
                 networkInputStream = boundedStream, // 안전하게 씌워진 스트림을 넘김
                 safeFileName = safeFileName,
@@ -509,8 +707,26 @@ class LocalFileServer(
                 aesKey = aesKey
             )
 
+            val source = clientSessions[token] ?: SharedSourceIdentity(
+                kind = SharedSourceKind.UNKNOWN,
+                sessionToken = token,
+                trustedDeviceId = null,
+                displayName = getDeviceFriendlyName(session.headers["user-agent"]),
+                ipAddress = session.remoteIpAddress,
+                userAgent = session.headers["user-agent"]
+            )
+
+            fileOwners[storedFile.name] = SharedFileOwner(
+                source = source,
+                receivedAtMillis = System.currentTimeMillis()
+            )
+
             logDebug("upload saved on-the-fly: path=${storedFile.absolutePath}, size=${storedFile.length()}")
             notifyFilesChanged()
+
+
+
+
             jsonResponse(
                 Response.Status.OK,
                 """{"success":true,"fileName":${jsonString(storedFile.name)},"size":${storedFile.length()}}"""
@@ -715,6 +931,13 @@ class LocalFileServer(
             }
         }
 
+
+    fun grantTrustedDevice(sessionToken: String, trustedToken: String) {
+        logDebug("trusted grant issued: sessionToken=$sessionToken")
+        pendingTrustedTokenGrants[sessionToken] = trustedToken
+        notifyTrustedDeviceApproved(sessionToken)
+    }
+
     private fun uploadError(status: Response.Status, message: String): Response {
         logDebug("upload failed: $message")
         return jsonError(status, message)
@@ -770,6 +993,12 @@ class LocalFileServer(
         }
     }
 
+    private fun Response.addNoStoreHeaders() {
+        addHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        addHeader("Pragma", "no-cache")
+        addHeader("Expires", "0")
+    }
+
 
 
 
@@ -799,6 +1028,7 @@ class LocalFileServer(
         private val CONTROL_CHARACTERS = Regex("[\\u0000-\\u001F\\u007F]")
         private val UNSAFE_FILE_NAME_CHARACTERS = Regex("""[/:*?"<>|]""")
         private val CLIENT_PUBLIC_KEY_PATTERN = Regex(""""clientPublicKey"\s*:\s*"([^"]+)"""")
+        private const val TRUSTED_DEVICE_COOKIE_NAME = "FocusWave-TrustedDevice"
         private val FALLBACK_HOME_PAGE = """
             <!doctype html>
             <html lang="ko">
@@ -844,6 +1074,99 @@ class LocalFileServer(
             </body>
             </html>
         """.trimIndent()
+    }
+}
+
+
+private class SseResponse(
+    private val stream: SseEventStream
+) : NanoHTTPD.Response(
+    NanoHTTPD.Response.Status.OK,
+    "text/event-stream; charset=utf-8",
+    null,
+    -1
+) {
+    override fun send(outputStream: OutputStream) {
+        try {
+            outputStream.write(
+                (
+                    "HTTP/1.1 ${NanoHTTPD.Response.Status.OK.description} \r\n" +
+                        "Content-Type: text/event-stream; charset=utf-8\r\n" +
+                        "Cache-Control: no-cache, no-transform\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "X-Accel-Buffering: no\r\n" +
+                        "\r\n"
+                    ).toByteArray(StandardCharsets.UTF_8)
+            )
+            outputStream.flush()
+
+            while (true) {
+                val chunk = stream.takeChunk()
+                outputStream.write(Integer.toHexString(chunk.size).toByteArray(StandardCharsets.US_ASCII))
+                outputStream.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
+                outputStream.write(chunk)
+                outputStream.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
+                outputStream.flush()
+            }
+        } catch (_: IOException) {
+            stream.close()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            stream.close()
+        }
+    }
+}
+
+
+private class SseEventStream : InputStream() {
+    private val chunks = LinkedBlockingQueue<ByteArray>()
+    private var currentChunk = ByteArray(0)
+    private var currentIndex = 0
+
+    fun sendComment(comment: String) {
+        enqueue(": $comment\n\n")
+    }
+
+    fun sendEvent(event: String, data: String) {
+        enqueue("event: $event\ndata: $data\n\n")
+    }
+
+    fun sendMessage(data: String) {
+        enqueue("data: $data\n\n")
+    }
+
+    @Throws(InterruptedException::class)
+    fun takeChunk(): ByteArray = chunks.take()
+
+    override fun read(): Int {
+        while (currentIndex >= currentChunk.size) {
+            currentChunk = chunks.take()
+            currentIndex = 0
+        }
+
+        return currentChunk[currentIndex++].toInt() and 0xff
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (length == 0) return 0
+
+        val firstByte = read()
+        if (firstByte < 0) return -1
+
+        buffer[offset] = firstByte.toByte()
+        var copied = 1
+
+        while (copied < length && currentIndex < currentChunk.size) {
+            buffer[offset + copied] = currentChunk[currentIndex++]
+            copied++
+        }
+
+        return copied
+    }
+
+    private fun enqueue(payload: String) {
+        chunks.offer(payload.toByteArray(Charsets.UTF_8))
     }
 }
 

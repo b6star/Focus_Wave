@@ -144,8 +144,8 @@ object FileShareCrypto {
         nonceBytes: ByteArray,
         aesKey: SecretKey
     ) : String {
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-        cipher.init(Cipher.DECRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(128, nonceBytes))
         val decodedBytes = Base64.getDecoder().decode(encryptedBase64)
         val decryptedBytes = cipher.doFinal(decodedBytes)
 
@@ -170,10 +170,15 @@ object FileShareCrypto {
         nonceBytes: ByteArray,
         aesKey: SecretKey
     ) {
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-        val ivSpec = IvParameterSpec(nonceBytes)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
 
-        cipher.init(Cipher.DECRYPT_MODE, aesKey, ivSpec)
+        val gcmSpec = GCMParameterSpec(128, nonceBytes)
+
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            aesKey,
+            gcmSpec
+        )
 
         // 256KB씩 청크 단위로 나누어 처리
         CipherInputStream(encryptedInputStream, cipher).use { cipherStream ->
