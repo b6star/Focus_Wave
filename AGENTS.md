@@ -61,3 +61,4 @@ Implement these file sharing tasks in this exact order:
 
 - Fix the issue where Wi-Fi or network state changes are not immediately reflected in the app.
 - Investigate migrating the web client's chunk-based AES-CBC cryptographic logic to AES-GCM.
+- Add mDNS-based discovery for the local file sharing server so users can connect with a short local hostname instead of typing long IPv6 addresses.
