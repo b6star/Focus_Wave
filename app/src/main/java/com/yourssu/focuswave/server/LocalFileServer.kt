@@ -1,4 +1,4 @@
-﻿package com.yourssu.focuswave.server
+package com.yourssu.focuswave.server
 
 import android.os.Build
 import android.util.Log
@@ -16,6 +16,10 @@ import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import javax.crypto.SecretKey
+import com.yourssu.focuswave.server.data.TrustedDeviceEntity
+import com.yourssu.focuswave.server.model.SharedFileOwner
+import com.yourssu.focuswave.server.model.SharedSourceIdentity
+import com.yourssu.focuswave.server.model.SharedSourceKind
 
 
 class LocalFileServer(
@@ -356,7 +360,7 @@ class LocalFileServer(
             else -> "Unknown OS"
         }
 
-        // 2. 브라우저 추출 (🚨 순서가 매우 중요합니다!)
+        // 2. 브라우저 추출 (?? 순서가 매우 중요합니다!)
         val browser = when {
             userAgent.contains("Edg", ignoreCase = true) -> "Edge"
             userAgent.contains("Whale", ignoreCase = true) -> "Whale" // 한국 환경 고려 (네이버 웨일)
@@ -665,7 +669,7 @@ class LocalFileServer(
         val metadataNonceBase64 = session.headers["x-meta-nonce"]
         val fileNonceBase64 = session.headers["x-focuswave-nonce"]
 
-        // 💡 PC가 보내는 원본 파일의 정확한 바이트 크기를 가져옵니다.
+        // ?? PC가 보내는 원본 파일의 정확한 바이트 크기를 가져옵니다.
         val contentLength = session.headers["content-length"]?.toLongOrNull()
 
 
@@ -774,7 +778,7 @@ class LocalFileServer(
             networkInputStream.buffered(256 * 1024).use { bufferedNetworkInput ->
                 tempDestination.outputStream().buffered(256 * 1024).use { decryptedOutput ->
 
-                    // 🚀 임시 파일 경유 없이, 와이파이 스트림을 받자마자 바로 복호화해서 디스크에 때려 박습니다.
+                    // ?? 임시 파일 경유 없이, 와이파이 스트림을 받자마자 바로 복호화해서 디스크에 때려 박습니다.
                     FileShareCrypto.decryptAesCbcStream(
                         encryptedInputStream = bufferedNetworkInput,
                         decryptedOutputStream = decryptedOutput,

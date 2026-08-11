@@ -1,4 +1,4 @@
-﻿package com.yourssu.focuswave.server
+package com.yourssu.focuswave.server
 
 import android.app.Application
 import android.content.Context
@@ -17,7 +17,13 @@ import android.net.Uri
 import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewModelScope
+import com.yourssu.focuswave.server.data.TrustedDeviceRepository
+import com.yourssu.focuswave.server.model.SharedSourceIdentity
+import com.yourssu.focuswave.server.model.SharedSourceKind
+import com.yourssu.focuswave.server.model.SharedSourceUi
 import com.yourssu.focuswave.ui.fileshare.SharedFileUi
+import com.yourssu.focuswave.ui.state.FileShareUiState
+import com.yourssu.focuswave.ui.state.TrustedDeviceUiState
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File

@@ -15,11 +15,9 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.indication
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -52,10 +50,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yourssu.focuswave.ui.orbit.OrbitSection
+import com.yourssu.focuswave.ui.orbit.OrbitUtil
 import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.ui.chat.ChatOverlay
 import com.yourssu.focuswave.ui.components.SoundMixerPanel
@@ -79,7 +78,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Icon
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.sp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -98,15 +96,17 @@ fun MainScreen(
     timerViewModel: TimerViewModel = viewModel(),
     fileServerManager: FileServerManager = viewModel()
 ) {
-    val uiState by timerViewModel.uiState.collectAsState()
+    val timerUiState by timerViewModel.uiState.collectAsState()
     val fileShareUiState by fileServerManager.uiState.collectAsState()
     var showFileShare by rememberSaveable { mutableStateOf(false) }
     var showChat by rememberSaveable { mutableStateOf(false) }
+
     val context = LocalContext.current
     val activity = context as? Activity
 
-    DisposableEffect(uiState.isRunning) {
-        if (uiState.isRunning) {
+
+    DisposableEffect(timerUiState.isRunning, fileShareUiState.isRunning) {
+        if (timerUiState.isRunning || fileShareUiState.isRunning) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -118,7 +118,7 @@ fun MainScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         MainScreenContent(
-            uiState = uiState,
+            timerUiState = timerUiState,
             onStartClick = timerViewModel::startTimer,
             onPauseClick = timerViewModel::pauseTimer,
             onResetClick = timerViewModel::resetTimer,
@@ -153,7 +153,7 @@ fun MainScreen(
 
 @Composable
 private fun MainScreenContent(
-    uiState: TimerUiState,
+    timerUiState: TimerUiState,
     onStartClick: () -> Unit,
     onPauseClick: () -> Unit,
     onResetClick: () -> Unit,
@@ -165,19 +165,19 @@ private fun MainScreenContent(
     onSoundEnabledChange: (SoundTrackId, Boolean) -> Unit,
     onSoundVolumeChange: (SoundTrackId, Float) -> Unit,
 ) {
-    val playbackSoundTracks = if (uiState.phase == TimerPhase.PAUSED) {
-        uiState.soundTracks.map { it.copy(isEnabled = false) }
+    val playbackSoundTracks = if (timerUiState.phase == TimerPhase.PAUSED) {
+        timerUiState.soundTracks.map { it.copy(isEnabled = false) }
     } else {
-        uiState.soundTracks
+        timerUiState.soundTracks
     }
 
     SoundPlaybackEffect(soundTracks = playbackSoundTracks)
 
     FocusScreen(
-        uiState = uiState,
+        uiState = timerUiState,
         timerOverlay = {
             TimerControlsPanel(
-                uiState = uiState,
+                uiState = timerUiState,
                 onStartClick = onStartClick,
                 onPauseClick = onPauseClick,
                 onResetClick = onResetClick,
@@ -190,13 +190,13 @@ private fun MainScreenContent(
         },
         countdownOverlay = {
             BreakCountdownOverlay(
-                isVisible = uiState.showBreakCountdown,
-                count = uiState.breakCountdownNumber
+                isVisible = timerUiState.showBreakCountdown,
+                count = timerUiState.breakCountdownNumber
             )
         },
         soundMixerPanel = {
             SoundMixerPanel(
-                soundTracks = uiState.soundTracks,
+                soundTracks = timerUiState.soundTracks,
                 onEnabledChange = onSoundEnabledChange,
                 onVolumeChange = onSoundVolumeChange
             )

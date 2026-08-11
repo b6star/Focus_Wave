@@ -18,7 +18,8 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 object FileShareCrypto {
-    val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
+    private val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
+    private val BUFFER_SIZE = 256 * 1024
 
     private val X25519_HEADER = intArrayOf(
         0x30, 0x2A, 0x30, 0x05,
@@ -92,7 +93,7 @@ object FileShareCrypto {
         val decodedBytes = Base64.getDecoder().decode(encryptedBase64)
         val decryptedBytes = cipher.doFinal(decodedBytes)
 
-        val actualLength = decryptedBytes.indexOfFirst { it == 0.toByte() }.let {
+        val actualLength = decryptedBytes.indexOf(0.toByte()).let {
             if (it == -1) decryptedBytes.size else it
         }
         return String(decryptedBytes, 0, actualLength, Charsets.UTF_8)
@@ -106,8 +107,7 @@ object FileShareCrypto {
     ) {
         cipher.init(Cipher.ENCRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
 
-        // 256KB 씩 암호화
-        val buffer = ByteArray(256 * 1024)
+        val buffer = ByteArray(BUFFER_SIZE)
         var read: Int
         while (plainInputStream.read(buffer).also { read = it } != -1) {
             cipher.update(buffer, 0, read)
@@ -115,14 +115,13 @@ object FileShareCrypto {
                 ?.let(encryptedOutputStream::write)
         }
 
-        // 태그처리
+        // ?쒓렇泥섎━
         cipher.doFinal()
             ?.takeIf { it.isNotEmpty() }
             ?.let(encryptedOutputStream::write)
 
-        // 버퍼에 남아있을 수 있는 데이터 처리
+        // 踰꾪띁???⑥븘?덉쓣 ???덈뒗 ?곗씠??泥섎━
         encryptedOutputStream.flush()
-
     }
 
     fun decryptAesCbcStream(
@@ -134,7 +133,7 @@ object FileShareCrypto {
         cipher.init(Cipher.DECRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
 
         CipherInputStream(encryptedInputStream, cipher).use { cipherStream ->
-            val buffer = ByteArray(256 * 1024)
+            val buffer = ByteArray(BUFFER_SIZE)
             var read: Int
             while (cipherStream.read(buffer).also { read = it } != -1) {
                 decryptedOutputStream.write(buffer, 0, read)

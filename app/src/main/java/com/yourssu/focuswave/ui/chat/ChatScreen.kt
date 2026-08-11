@@ -53,7 +53,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
-import com.yourssu.focuswave.server.FileShareUiState
+import com.yourssu.focuswave.ui.state.FileShareUiState
 
 private data class ChatMessageUi(
     val id: Int,

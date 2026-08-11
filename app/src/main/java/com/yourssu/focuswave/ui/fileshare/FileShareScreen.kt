@@ -1,4 +1,4 @@
-﻿package com.yourssu.focuswave.ui.fileshare
+package com.yourssu.focuswave.ui.fileshare
 
 import android.content.ContentValues
 import android.content.Context
@@ -51,9 +51,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
-import com.yourssu.focuswave.server.FileShareUiState
 import com.yourssu.focuswave.server.LocalFileServer
-import com.yourssu.focuswave.server.SharedSourceIdentity
+import com.yourssu.focuswave.server.model.SharedSourceIdentity
+import com.yourssu.focuswave.ui.state.FileShareUiState
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
