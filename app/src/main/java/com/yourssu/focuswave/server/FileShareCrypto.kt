@@ -14,9 +14,11 @@ import javax.crypto.KeyAgreement
 import javax.crypto.Mac
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 object FileShareCrypto {
+    val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
 
     private val X25519_HEADER = intArrayOf(
         0x30, 0x2A, 0x30, 0x05,
@@ -60,13 +62,13 @@ object FileShareCrypto {
         val aesKeyBytes = hkdfSha256(
             inputKeyMaterial = sharedSecret,
             salt = "FocusWave FileShare Salt".toByteArray(Charsets.UTF_8),
-            info = "FocusWave ECDH AES-GCM v1".toByteArray(Charsets.UTF_8),
+            info = "FocusWave ECDH AES-CBC v1".toByteArray(Charsets.UTF_8),
             outputLength = 32
         )
         return SecretKeySpec(aesKeyBytes, "AES")
     }
 
-    fun encryptAesGcmStringWith256Padding(
+    fun encryptAesCbcStringWith256Padding(
         plainText: String,
         nonceBytes: ByteArray,
         aesKey: SecretKey
@@ -76,20 +78,17 @@ object FileShareCrypto {
 
         val paddedBytes = ByteArray(256)
         System.arraycopy(plainBytes, 0, paddedBytes, 0, plainBytes.size)
-
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, aesKey, GCMParameterSpec(128, nonceBytes))
+        cipher.init(Cipher.ENCRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
         val encryptedBytes = cipher.doFinal(paddedBytes)
         return Base64.getEncoder().encodeToString(encryptedBytes)
     }
 
-    fun decryptAesGcmString(
+    fun decryptAesCbcString(
         encryptedBase64: String,
         nonceBytes: ByteArray,
         aesKey: SecretKey
     ): String {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(128, nonceBytes))
+        cipher.init(Cipher.DECRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
         val decodedBytes = Base64.getDecoder().decode(encryptedBase64)
         val decryptedBytes = cipher.doFinal(decodedBytes)
 
@@ -99,14 +98,13 @@ object FileShareCrypto {
         return String(decryptedBytes, 0, actualLength, Charsets.UTF_8)
     }
 
-    fun encryptAesGcmStream(
+    fun encryptAesCbcStream(
         plainInputStream: InputStream,
         encryptedOutputStream: OutputStream,
         nonceBytes: ByteArray,
         aesKey: SecretKey
     ) {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, aesKey, GCMParameterSpec(128, nonceBytes))
+        cipher.init(Cipher.ENCRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
 
         // 256KB 씩 암호화
         val buffer = ByteArray(256 * 1024)
@@ -127,14 +125,13 @@ object FileShareCrypto {
 
     }
 
-    fun decryptAesGcmStream(
+    fun decryptAesCbcStream(
         encryptedInputStream: InputStream,
         decryptedOutputStream: OutputStream,
         nonceBytes: ByteArray,
         aesKey: SecretKey
     ) {
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(128, nonceBytes))
+        cipher.init(Cipher.DECRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
 
         CipherInputStream(encryptedInputStream, cipher).use { cipherStream ->
             val buffer = ByteArray(256 * 1024)
