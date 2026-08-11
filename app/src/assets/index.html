@@ -508,7 +508,7 @@
 
 <script type="module">
     import { x25519 } from "https://esm.sh/@noble/curves@1.9.7/ed25519?bundle";
-    import { gcm } from "https://esm.sh/@noble/ciphers@1.3.0/aes?bundle";
+    import { cbc } from "https://esm.sh/@noble/ciphers@1.3.0/aes?bundle";
     import { hkdf } from "https://esm.sh/@noble/hashes@1.8.0/hkdf?bundle";
     import { sha256 } from "https://esm.sh/@noble/hashes@1.8.0/sha2?bundle";
 
@@ -568,7 +568,7 @@
             sha256,  // HKDF에서 사용할 해시 함수
             sharedSecret,
             textEncoder.encode("FocusWave FileShare Salt"),   // 랜덤 Key Salt값
-            textEncoder.encode("FocusWave ECDH AES-GCM v1"),  //
+            textEncoder.encode("FocusWave ECDH AES-CBC v1"),  //
             32  // 출력 키 길이 32바이트 = 256비트
         );
     }
@@ -603,14 +603,14 @@
     }
 
     async function encryptFileName(fileName) {
-        const nonce = randomBytes(12);
+        const nonce = randomBytes(16);
         const plainBytes = textEncoder.encode(fileName);
         if (plainBytes.length > 256) throw new Error("File name too long");
         const padded256Bytes = new Uint8Array(256);
         padded256Bytes.set(plainBytes);
         const finalPaddedBytes = pkcs7Pad(padded256Bytes);
 
-        const aes = gcm(aesKeyBytes, nonce);
+        const aes = cbc(aesKeyBytes, nonce);
         const encryptedBytes = aes.encrypt(finalPaddedBytes);
 
         return {
@@ -623,7 +623,7 @@
         const nonce = base64ToBytes(nonceBase64);
         const encryptedBytes = base64ToBytes(encryptedBase64);
 
-        const aes = gcm(aesKeyBytes, nonce);
+        const aes = cbc(aesKeyBytes, nonce);
         const decryptedWithPadding = aes.decrypt(encryptedBytes);
 
         // 1. PKCS7 패딩 찌꺼기 우선 제거 (272바이트 -> 256바이트로 복원)
@@ -643,15 +643,15 @@
         // 브라우저 렌더링 멈춤 방지
         await new Promise(resolve => setTimeout(resolve, 100));
 
-        // GCM에서는 일반적으로 12바이트 nonce 사용
-        const nonce = randomBytes(12);
+        // CBC 일반적으로 16바이트 nonce 사용
+        const nonce = randomBytes(16);
 
         // 파일 전체를 메모리에 읽음
         const plainBuffer = await file.arrayBuffer();
         const plainBytes = new Uint8Array(plainBuffer);
 
-        // AES-GCM 암호화
-        const aes = gcm(aesKeyBytes, nonce);
+        // AES-CBC 암호화
+        const aes = cbc(aesKeyBytes, nonce);
         const encryptedBytes = aes.encrypt(plainBytes);
 
         return {
@@ -746,11 +746,11 @@
         }
 
         try {
-            const aes = gcm(aesKeyBytes, nonce);
+            const aes = cbc(aesKeyBytes, nonce);
             const paddedPlainBytes = aes.decrypt(encryptedBytes);
 
             // 주석 유지
-            // const plainBytes = pkcs7Unpad(paddedPlainBytes);
+            //const plainBytes = pkcs7Unpad(paddedPlainBytes);
             const plainBytes = paddedPlainBytes;
 
             const blob = new Blob([plainBytes], {

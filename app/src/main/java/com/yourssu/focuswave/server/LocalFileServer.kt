@@ -590,7 +590,7 @@ class LocalFileServer(
         metaNonceBase64: String,
         aesKey: SecretKey
     ): String? = runCatching {
-        FileShareCrypto.decryptAesGcmString(
+        FileShareCrypto.decryptAesCbcString(
             encryptedFileNameBase64,
             Base64.getDecoder().decode(metaNonceBase64),
             aesKey
@@ -612,15 +612,15 @@ class LocalFileServer(
     ): Response {
         val dummyMimeType = "application/octet-stream"
 
-        val metaNonceBytes = ByteArray(12)
+        val metaNonceBytes = ByteArray(16)
         secureRandom.nextBytes(metaNonceBytes)
         val encryptedFileNameBase64 =
-            FileShareCrypto.encryptAesGcmStringWith256Padding(file.name, metaNonceBytes, aesKey)
+            FileShareCrypto.encryptAesCbcStringWith256Padding(file.name, metaNonceBytes, aesKey)
         val metaNonceBase64 = Base64.getEncoder().encodeToString(metaNonceBytes)
 
-        val nonceBytes = ByteArray(12)
+        val nonceBytes = ByteArray(16)
         secureRandom.nextBytes(nonceBytes)
-        val expectedEncryptedSize = file.length() + 16
+        val expectedEncryptedSize = (file.length() + 16) / 16 * 16
 
         return object : Response(
             Response.Status.OK,
@@ -645,7 +645,7 @@ class LocalFileServer(
                     )
 
                     file.inputStream().use { plainInput ->
-                        FileShareCrypto.encryptAesGcmStream(
+                        FileShareCrypto.encryptAesCbcStream(
                             plainInputStream = plainInput,
                             encryptedOutputStream = outputStream,
                             nonceBytes = nonceBytes,
@@ -688,7 +688,7 @@ class LocalFileServer(
         val rawFileName = try{
             val metaNonceBytes = Base64.getDecoder().decode(metadataNonceBase64)
 
-            FileShareCrypto.decryptAesGcmString(
+            FileShareCrypto.decryptAesCbcString(
                 encryptedFileNameBase64,
                 metaNonceBytes,
                 aesKey
@@ -740,8 +740,6 @@ class LocalFileServer(
             notifyFilesChanged()
 
 
-
-
             jsonResponse(
                 Response.Status.OK,
                 """{"success":true,"fileName":${jsonString(storedFile.name)},"size":${storedFile.length()}}"""
@@ -777,7 +775,7 @@ class LocalFileServer(
                 tempDestination.outputStream().buffered(256 * 1024).use { decryptedOutput ->
 
                     // 🚀 임시 파일 경유 없이, 와이파이 스트림을 받자마자 바로 복호화해서 디스크에 때려 박습니다.
-                    FileShareCrypto.decryptAesGcmStream(
+                    FileShareCrypto.decryptAesCbcStream(
                         encryptedInputStream = bufferedNetworkInput,
                         decryptedOutputStream = decryptedOutput,
                         nonceBytes = nonceBytes,
