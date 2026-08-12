@@ -43,6 +43,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import com.yourssu.focuswave.ui.theme.WhiteText85
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -143,8 +144,8 @@ fun ChatOverlay(
                     maxLines = 4,
                     shape = RoundedCornerShape(22.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
+                        focusedTextColor = WhiteText85,
+                        unfocusedTextColor = WhiteText85,
                         focusedBorderColor = Color(0xFF8A86E6),
                         unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
                         cursorColor = Color(0xFFB8B5FF),
@@ -200,7 +201,7 @@ private fun ChatHeader(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = "Focus Wave Chat",
-                color = Color.White,
+                color = WhiteText85,
                 style = MaterialTheme.typography.titleLarge
             )
             Text(
@@ -389,7 +390,7 @@ private fun ChatBubble(
             Text(
                 text = message.text,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                color = Color.White,
+                color = WhiteText85,
                 style = MaterialTheme.typography.bodyMedium
             )
         }
