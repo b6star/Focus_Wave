@@ -27,12 +27,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -52,6 +55,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.ui.orbit.OrbitSection
 import com.yourssu.focuswave.ui.orbit.OrbitUtil
@@ -60,10 +64,12 @@ import com.yourssu.focuswave.ui.chat.ChatOverlay
 import com.yourssu.focuswave.ui.components.SoundMixerPanel
 import com.yourssu.focuswave.ui.fileshare.FileShareOverlay
 import com.yourssu.focuswave.ui.sound.SoundPlaybackEffect
+import com.yourssu.focuswave.ui.state.SoundCategoryId
 import com.yourssu.focuswave.ui.state.SoundTrackId
 import com.yourssu.focuswave.ui.state.TimerPhase
 import com.yourssu.focuswave.ui.state.TimerUiState
 import com.yourssu.focuswave.ui.theme.FocusWaveTheme
+import com.yourssu.focuswave.ui.theme.WhiteText85
 import com.yourssu.focuswave.ui.timer.TimerViewModel
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
@@ -76,8 +82,12 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material3.Icon
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.yourssu.focuswave.ui.theme.WhiteText100
+import kotlinx.coroutines.withTimeoutOrNull
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -128,7 +138,9 @@ fun MainScreen(
             onSettingsClick = { },
             timerViewModel = timerViewModel,
             onSoundEnabledChange = timerViewModel::setSoundEnabled,
-            onSoundVolumeChange = timerViewModel::setSoundVolume
+            onSoundVolumeChange = timerViewModel::setSoundVolume,
+            onSoundSelectionModeToggle = timerViewModel::toggleSoundSelectionMode,
+            onSoundTrackSelected = timerViewModel::setSoundTrack
         )
 
         if (showFileShare) {
@@ -162,16 +174,18 @@ private fun MainScreenContent(
     onChatClick: () -> Unit,
     onSettingsClick: () -> Unit,
     timerViewModel: TimerViewModel,
-    onSoundEnabledChange: (SoundTrackId, Boolean) -> Unit,
-    onSoundVolumeChange: (SoundTrackId, Float) -> Unit,
+    onSoundEnabledChange: (SoundCategoryId, Boolean) -> Unit,
+    onSoundVolumeChange: (SoundCategoryId, Float) -> Unit,
+    onSoundSelectionModeToggle: () -> Unit,
+    onSoundTrackSelected: (SoundCategoryId, SoundTrackId) -> Unit,
 ) {
-    val playbackSoundTracks = if (timerUiState.phase == TimerPhase.PAUSED) {
-        timerUiState.soundTracks.map { it.copy(isEnabled = false) }
+    val playbackSoundCategories = if (timerUiState.phase == TimerPhase.PAUSED) {
+        timerUiState.soundMixer.categories.map { it.copy(isEnabled = false) }
     } else {
-        timerUiState.soundTracks
+        timerUiState.soundMixer.categories
     }
 
-    SoundPlaybackEffect(soundTracks = playbackSoundTracks)
+    SoundPlaybackEffect(soundCategories = playbackSoundCategories)
 
     FocusScreen(
         uiState = timerUiState,
@@ -183,9 +197,7 @@ private fun MainScreenContent(
                 onResetClick = onResetClick,
                 onNewPathClick = onNewPathClick,
                 onDecreaseFocus = timerViewModel::decreaseFocusMinutes,
-                onIncreaseFocus = timerViewModel::increaseFocusMinutes,
-                onDecreaseBreak = timerViewModel::decreaseBreakMinutes,
-                onIncreaseBreak = timerViewModel::increaseBreakMinutes
+                onIncreaseFocus = timerViewModel::increaseFocusMinutes
             )
         },
         countdownOverlay = {
@@ -196,9 +208,12 @@ private fun MainScreenContent(
         },
         soundMixerPanel = {
             SoundMixerPanel(
-                soundTracks = timerUiState.soundTracks,
+                soundCategories = timerUiState.soundMixer.categories,
+                isSelectionMode = timerUiState.soundMixer.isSelectionMode,
+                onSelectionModeToggle = onSoundSelectionModeToggle,
                 onEnabledChange = onSoundEnabledChange,
-                onVolumeChange = onSoundVolumeChange
+                onVolumeChange = onSoundVolumeChange,
+                onTrackSelected = onSoundTrackSelected
             )
         },
         bottomNavigation = {
@@ -234,10 +249,10 @@ private fun FocusScreen(
                     .padding(innerPadding)
             ) {
                 val compactHeight = maxHeight < 720.dp
-                val horizontalPadding = if (compactHeight) 12.dp else 16.dp
-                val verticalPadding = if (compactHeight) 8.dp else 12.dp
-                val sectionGap = if (compactHeight) 8.dp else 12.dp
-                val orbitMinHeight = if (compactHeight) 170.dp else 220.dp
+                val horizontalPadding = if (compactHeight) 18.dp else 26.dp
+                val verticalPadding = if (compactHeight) 12.dp else 24.dp
+                val sectionGap = if (compactHeight) 10.dp else 14.dp
+                val orbitMinHeight = if (compactHeight) 260.dp else 420.dp
 
                 Column(
                     modifier = Modifier
@@ -248,13 +263,12 @@ private fun FocusScreen(
                 ) {
                     timerOverlay()
 
-
                     OrbitSection(
                         progress = uiState.progress,
                         pathSeed = uiState.pathSeed,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
+                            .weight(1.35f)
                             .heightIn(min = orbitMinHeight)
                     )
 
@@ -274,15 +288,33 @@ private fun FocusScene(
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         Image(
-            painter = painterResource(id = R.drawable.grok_space_02),
+            painter = painterResource(id = R.drawable.grok_space_03),
             contentDescription = "Space background",
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            Color(0x90000006),
+                            Color(0x78000410),
+                            Color(0xA0000006)
+                        )
+                    )
+                )
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp)
+                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), RoundedCornerShape(26.dp))
+        )
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TimerControlsPanel(
     uiState: TimerUiState,
@@ -292,11 +324,8 @@ private fun TimerControlsPanel(
     onNewPathClick: () -> Unit,
     onDecreaseFocus: () -> Unit,
     onIncreaseFocus: () -> Unit,
-    onDecreaseBreak: () -> Unit,
-    onIncreaseBreak: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(24.dp)
     val journeyText = OrbitUtil.getStateByProgress(
         progress = uiState.progress,
         phase = uiState.phase,
@@ -306,106 +335,232 @@ private fun TimerControlsPanel(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.20f),
-                        Color.White.copy(alpha = 0.09f)
-                    )
-                )
-            )
-            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.24f)), shape)
-            .padding(horizontal = 18.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = 22.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            )
-            {
-                Text(
-                    text = uiState.formattedTime,
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                Text(
-                    text = "TOTAL ${uiState.totalFormattedTime} / ${uiState.statusText}",
-                    color = Color.White.copy(alpha = 0.72f),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                Text(
-                    text = journeyText,
-                    color = Color.White.copy(alpha = 0.78f),
-                    style = MaterialTheme.typography.labelMedium
-                )
-            }
-
             Row(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Icon(
+                    imageVector = Icons.Default.GpsFixed,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.92f),
+                    modifier = Modifier.size(22.dp)
+                )
                 Text(
-                    text = uiState.activePhase.name,
-                    color = Color.White.copy(alpha = 0.78f),
-                    style = MaterialTheme.typography.labelMedium
+                    text = "FOCUS",
+                    color = Color.White.copy(alpha = 0.92f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
-        }
-
-        LinearProgressIndicator(
-            progress = { uiState.progress },
-            modifier = Modifier.fillMaxWidth(),
-            color = Color.White,
-            trackColor = Color.White.copy(alpha = 0.24f)
-        )
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TimerDurationSettings(
-                focusMinutes = uiState.focusMinutes,
-                breakMinutes = uiState.breakMinutes,
-                enabled = uiState.canEditDurations,
-                onDecreaseFocus = onDecreaseFocus,
-                onIncreaseFocus = onIncreaseFocus,
-                onDecreaseBreak = onDecreaseBreak,
-                onIncreaseBreak = onIncreaseBreak
-            )
-            Spacer(modifier = Modifier.weight(1f))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(
-                    8.dp,
-                )
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                TimerActionButton(
-                    icon = if (uiState.isRunning) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    onClick = {
-                        if (uiState.isRunning) {
-                            onPauseClick()
-                        } else {
-                            onStartClick()
-                        }
-                    }
-                )
-                TimerActionButton(
+                CompactIconButton(
                     icon = Icons.Default.Refresh,
                     onClick = onResetClick
                 )
-                TimerActionButton(
-                    icon = Icons.Default.Route,
+                CompactIconButton(
+                    icon = Icons.Default.Settings,
                     onClick = onNewPathClick
                 )
             }
-
         }
+
+        // 시간 텍스트
+        Text(
+            text = uiState.formattedTime,
+            color = WhiteText100.copy(alpha = 0.85f),
+            style = MaterialTheme.typography.displayLarge,
+            fontSize = 92.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.sp,
+            textAlign = TextAlign.Center
+        )
+
+        Text(
+            text = if (uiState.phase == TimerPhase.READY) "Ready for launch" else journeyText,
+            color = Color.White.copy(alpha = 0.72f),
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(0.78f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(54.dp)
+        ) {
+            DurationPill(
+                minutes = uiState.focusMinutes,
+                enabled = uiState.canEditDurations,
+                onDecrease = onDecreaseFocus,
+                onIncrease = onIncreaseFocus,
+                modifier = Modifier.weight(1f)
+            )
+            LaunchButton(
+                isRunning = uiState.isRunning,
+                onClick = {
+                    if (uiState.isRunning) onPauseClick() else onStartClick()
+                },
+                modifier = Modifier.weight(1.06f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun DurationPill(
+    minutes: Int,
+    enabled: Boolean,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(28.dp)
+
+    Row(
+        modifier = modifier
+            .height(60.dp)
+            .clip(shape)
+            .background(Color(0xCC090D1D))
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), shape)
+            .padding(horizontal = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        StepperIconButton(
+            icon = Icons.Default.Remove,
+            enabled = enabled,
+            onClick = onDecrease
+        )
+        Text(
+            text = "$minutes min",
+            color = WhiteText85,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+        StepperIconButton(
+            icon = Icons.Default.Add,
+            enabled = enabled,
+            onClick = onIncrease
+        )
+    }
+}
+
+@Composable
+private fun StepperIconButton(
+    icon: ImageVector,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .pointerInput(enabled) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    if (!enabled) {
+                        waitForUpOrCancellation()
+                        return@awaitEachGesture
+                    }
+                    down.consume()
+                    val releasedBeforeLongPress = withTimeoutOrNull(450L) {
+                        waitForUpOrCancellation()
+                    }
+                    if (releasedBeforeLongPress != null) {
+                        releasedBeforeLongPress.consume()
+                        onClick()
+                        return@awaitEachGesture
+                    }
+                    onClick()
+                    while (true) {
+                        val up = withTimeoutOrNull(100L) {
+                            waitForUpOrCancellation()
+                        }
+                        if (up != null) {
+                            up.consume()
+                            break
+                        }
+                        onClick()
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = if (enabled) 0.88f else 0.28f),
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+@Composable
+private fun LaunchButton(
+    isRunning: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    ElevatedButton(
+        onClick = onClick,
+        modifier = modifier.height(60.dp),
+        shape = RoundedCornerShape(32.dp),
+        elevation = ButtonDefaults.elevatedButtonElevation(
+            defaultElevation = 0.dp,
+            pressedElevation = 0.dp,
+            hoveredElevation = 0.dp,
+            focusedElevation = 0.dp
+        ),
+        colors = ButtonDefaults.elevatedButtonColors(
+            containerColor = if (isRunning) Color.White.copy(alpha = 0.16f) else Color(0xCC071839),
+            contentColor = Color.White
+        ),
+        contentPadding = PaddingValues(horizontal = 18.dp)
+    ) {
+        Icon(
+            imageVector = if (isRunning) Icons.Default.Pause else Icons.Default.RocketLaunch,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = if (isRunning) "PAUSE" else "LAUNCH",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun CompactIconButton(
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(38.dp)
+            .clip(RoundedCornerShape(14.dp))
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.78f),
+            modifier = Modifier.size(19.dp)
+        )
     }
 }
 
@@ -425,9 +580,9 @@ private fun FocusBottomNavigation(
         Row(
             modifier = Modifier
                 .clip(RoundedCornerShape(28.dp))
-                .background(Color.Black.copy(alpha = 0.42f))
+                .background(Color(0xCC061425))
                 .border(
-                    BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)),
+                    BorderStroke(1.dp, Color(0xFF66C7FF).copy(alpha = 0.18f)),
                     RoundedCornerShape(28.dp)
                 )
                 .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -435,17 +590,17 @@ private fun FocusBottomNavigation(
             verticalAlignment = Alignment.CenterVertically
         ) {
             BottomNavButton(
-                label = "파일",
+                label = "Files",
                 icon = Icons.Default.UploadFile,
                 onClick = onFileShareClick
             )
             BottomNavButton(
-                label = "채팅",
+                label = "Chat",
                 icon = Icons.Default.ChatBubble,
                 onClick = onChatClick
             )
             BottomNavButton(
-                label = "설정",
+                label = "Settings",
                 icon = Icons.Default.Settings,
                 onClick = onSettingsClick
             )
@@ -471,7 +626,7 @@ private fun BottomNavButton(
             focusedElevation = 0.dp
         ),
         colors = ButtonDefaults.elevatedButtonColors(
-            containerColor = Color.White.copy(alpha = 0.16f),
+            containerColor = Color.White.copy(alpha = 0.10f),
             contentColor = Color.White,
             disabledContainerColor = Color.White.copy(alpha = 0.08f),
             disabledContentColor = Color.White.copy(alpha = 0.38f)
@@ -560,7 +715,7 @@ private fun DurationStepper(
             )
             Text(
                 text = "${minutes}m",
-                color = Color.White,
+                color = WhiteText85,
                 style = MaterialTheme.typography.bodyMedium
             )
         }
@@ -703,7 +858,7 @@ private fun BreakCountdownOverlay(
             )
             Text(
                 text = count.toString(),
-                color = Color.White,
+                color = WhiteText85,
                 style = MaterialTheme.typography.displayLarge,
                 textAlign = TextAlign.Center
             )
@@ -730,10 +885,8 @@ fun MainScreenPreview() {
                     onPauseClick = {},
                     onResetClick = {},
                     onNewPathClick = {},
-                    onIncreaseBreak = {},
                     onIncreaseFocus = {},
-                    onDecreaseFocus = {},
-                    onDecreaseBreak = {}
+                    onDecreaseFocus = {}
                 )
             },
             countdownOverlay = {},

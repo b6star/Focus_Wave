@@ -294,3 +294,74 @@ For now, this is acceptable as a temporary bridge, but it should not become the 
 `./gradlew.bat assembleDebug` succeeds.
 
 No code changes were made during this documentation pass except this handoff file.
+
+## Sound Mixer Category Refactor Handoff
+
+The next sound mixer change should convert the current flat sound-track model into a category/option model.
+
+Current concept:
+
+- Each sound item is treated as an independent track.
+- This makes `RAIN_THUNDER`, `RAIN_THUNDER2`, and `RAIN_IN_CAR` playable at the same time even though they belong to the same Rain theme.
+
+Target concept:
+
+- `Rain`, `Ocean`, `Cafe`, `Space`, and `City` should be sound categories.
+- Each category should contain multiple selectable sound options.
+- The same category can have only one selected option at a time.
+- Different categories can still play at the same time.
+- If there is no persisted user choice, each category should use its default option.
+- After the user selects an option, that option becomes the category's default selection for later use.
+
+Recommended naming:
+
+- Prefer `soundCategories` over `soundThemes`.
+- Prefer `SoundCategoryUiState`, `SoundCategoryId`, `SoundOptionUiState`, and `SoundOptionId`.
+- Avoid continuing to use `SoundTrackUiState` for categories because it makes the model harder to read.
+
+Primary files to update:
+
+- `app/src/main/java/com/yourssu/focuswave/ui/state/TimerUiState.kt`
+  - Replace `soundTracks` with `soundCategories`.
+  - Add `isSoundSelectionMode`.
+  - Replace `SoundTrackUiState` / `SoundTrackId` with category and option types.
+  - Define `defaultSoundCategories`.
+- `app/src/main/java/com/yourssu/focuswave/ui/timer/TimerViewModel.kt`
+  - Replace `setSoundEnabled` with category-based enable handling.
+  - Replace `setSoundVolume` with category-based volume handling.
+  - Add `toggleSoundSelectionMode()`.
+  - Add `selectSoundOption(categoryId, optionId)`.
+  - Update paused-sound snapshot and restore logic to use category IDs.
+- `app/src/main/java/com/yourssu/focuswave/ui/components/SoundMixer.kt`
+  - Change `SoundMixerPanel` to receive `soundCategories`.
+  - Add a header-right selection-mode toggle button.
+  - Do not add per-category sound selection buttons.
+  - When selection mode is on, expand every category card and show its option list separated from the main card controls.
+  - Card tap should continue to toggle category playback.
+- `app/src/main/java/com/yourssu/focuswave/ui/sound/SoundPlaybackEffect.kt`
+  - Change playback input from tracks to categories.
+  - Create or select `MediaPlayer` by `SoundOptionId`, not category ID.
+  - For each enabled category, play only the selected option.
+- `app/src/main/java/com/yourssu/focuswave/MainActivity.kt`
+  - Pass `timerUiState.soundCategories`.
+  - Pass `timerUiState.isSoundSelectionMode`.
+  - Wire the new ViewModel callbacks into `SoundMixerPanel`.
+  - Pass paused playback categories into `SoundPlaybackEffect`.
+
+Suggested UI behavior:
+
+- Selection mode off:
+  - Category card tap toggles playback on/off.
+  - Volume slider controls that category.
+  - The selected option name is shown as secondary text.
+- Selection mode on:
+  - The `SOUND MIXER` header button appears active.
+  - All category cards show their sound options.
+  - Selecting an option changes only that category's `selectedOptionId`.
+  - Selecting an option should not automatically toggle playback unless the user explicitly decides to change that behavior.
+
+Persistence note:
+
+- The project does not yet have persistence for selected sound options.
+- Later, store the selected `SoundOptionId` per `SoundCategoryId` with DataStore or another lightweight preference store.
+- On app start, load saved selections; if missing, use each category's built-in default option.

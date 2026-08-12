@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -17,8 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -33,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.yourssu.focuswave.R
+import com.yourssu.focuswave.ui.theme.WhiteText85
 import kotlin.math.PI
 import kotlin.math.atan2
 
@@ -51,33 +54,33 @@ fun OrbitSection(
         val clampedProgress = progress.coerceIn(0f, 1f)
 
         val earthSize = when {
-            veryCompact -> 42.dp
-            compact -> 50.dp
-            else -> 64.dp
+            veryCompact -> 92.dp
+            compact -> 122.dp
+            else -> 160.dp
         }
         val moonSize = when {
-            veryCompact -> 36.dp
-            compact -> 42.dp
-            else -> 54.dp
+            veryCompact -> 72.dp
+            compact -> 72.dp
+            else -> 112.dp
         }
         val rocketSize = when {
-            veryCompact -> 48.dp
-            compact -> 58.dp
-            else -> 74.dp
+            veryCompact -> 52.dp
+            compact -> 66.dp
+            else -> 82.dp
         }
         val markerBoxSize = when {
-            veryCompact -> 96.dp
-            compact -> 112.dp
-            else -> 136.dp
+            veryCompact -> 132.dp
+            compact -> 158.dp
+            else -> 210.dp
         }
 
         val markerBoxPx = with(density) { markerBoxSize.toPx() }
-        val edgePaddingPx = with(density) { if (compact) 10.dp.toPx() else 18.dp.toPx() }
+        val edgePaddingPx = with(density) { if (compact) 0.dp.toPx() else 8.dp.toPx() }
         val markerCenterInset = markerBoxPx * 0.5f + edgePaddingPx
-        val earthCenterX = markerCenterInset.coerceAtMost(width * 0.34f)
-        val moonCenterX = (width - markerCenterInset).coerceAtLeast(width * 0.66f)
-        val earthCenterY = (height - markerCenterInset).coerceAtLeast(height * 0.58f)
-        val moonCenterY = markerCenterInset.coerceAtMost(height * 0.42f)
+        val earthCenterX = markerCenterInset.coerceAtMost(width * 0.20f)
+        val moonCenterX = (width - markerCenterInset).coerceAtLeast(width * 0.82f)
+        val earthCenterY = (height - markerCenterInset).coerceAtLeast(height * 0.80f)
+        val moonCenterY = markerCenterInset.coerceAtMost(height * 0.20f)
 
         val path = remember(width, height, pathSeed, earthCenterX, earthCenterY, moonCenterX, moonCenterY) {
             OrbitUtil.generateJourneyPath(
@@ -111,49 +114,24 @@ fun OrbitSection(
             pathMeasure.getSegment(0f, currentDistance, traveledPath, true)
             pathMeasure.getSegment(currentDistance, pathMeasure.length, remainingPath, true)
 
-            drawRoundRect(
-                color = Color.Black.copy(alpha = 0.20f),
-                cornerRadius = CornerRadius(30f, 30f)
-            )
-            drawCircle(
-                color = Color.Black.copy(alpha = 0.22f),
-                radius = earthSize.toPx() * 2.5f,
-                center = Offset(earthCenterX, earthCenterY)
-            )
-            drawCircle(
-                color = Color.Black.copy(alpha = 0.18f),
-                radius = moonSize.toPx() * 2.5f,
-                center = Offset(moonCenterX, moonCenterY)
-            )
-            drawCircle(
-                color = Color(0xFF5BE7FF).copy(alpha = 0.22f),
-                radius = markerBoxPx * 0.42f,
-                center = Offset(earthCenterX, earthCenterY)
-            )
-            drawCircle(
-                color = Color(0xFFFFF3B0).copy(alpha = 0.18f),
-                radius = markerBoxPx * 0.36f,
-                center = Offset(moonCenterX, moonCenterY)
-            )
-
             drawPath(
                 path = path,
-                color = Color.Black.copy(alpha = 0.42f),
-                style = Stroke(width = 9f, cap = StrokeCap.Round)
+                color = Color.Black.copy(alpha = 0.30f),
+                style = Stroke(width = 8f, cap = StrokeCap.Round)
             )
             drawPath(
                 path = remainingPath,
-                color = Color.White.copy(alpha = 0.34f),
+                color = Color.White.copy(alpha = 0.2f),
                 style = Stroke(
-                    width = 5f,
+                    width = 4.2f,
                     cap = StrokeCap.Round,
-                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(18f, 14f), 0f)
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 14f), 0f)
                 )
             )
             drawPath(
                 path = traveledPath,
-                color = Color(0xFF8FEFFF).copy(alpha = 0.92f),
-                style = Stroke(width = 6f, cap = StrokeCap.Round)
+                color = Color(0xFF61C7FF).copy(alpha = 0.94f),
+                style = Stroke(width = 5.5f, cap = StrokeCap.Round)
             )
             drawPath(
                 path = traveledPath,
@@ -170,7 +148,11 @@ fun OrbitSection(
             imageResId = R.drawable.earth,
             contentDescription = "Earth start point",
             label = "START",
-            labelAlignment = Alignment.TopCenter
+            labelAlignment = Alignment.TopCenter,
+            imageAlpha = 0.82f,
+            shadowAlpha = 0.80f,
+            shadowOffsetXRatio = 0.24f,
+            shadowOffsetYRatio = 0.18f
         )
 
         JourneyMarker(
@@ -181,12 +163,11 @@ fun OrbitSection(
             imageResId = R.drawable.moon,
             contentDescription = "Moon goal point",
             label = "GOAL",
-            labelAlignment = Alignment.BottomCenter
-        )
-
-        RouteStagePill(
-            progress = clampedProgress,
-            modifier = Modifier.align(Alignment.TopCenter)
+            labelAlignment = Alignment.BottomCenter,
+            imageAlpha = 0.72f,
+            shadowAlpha = 0.76f,
+            shadowOffsetXRatio = -0.22f,
+            shadowOffsetYRatio = 0.16f
         )
 
         Image(
@@ -215,6 +196,10 @@ private fun JourneyMarker(
     contentDescription: String,
     label: String,
     labelAlignment: Alignment,
+    imageAlpha: Float,
+    shadowAlpha: Float,
+    shadowOffsetXRatio: Float,
+    shadowOffsetYRatio: Float,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -226,51 +211,59 @@ private fun JourneyMarker(
             },
         contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            drawCircle(Color.Black.copy(alpha = 0.34f), radius = size.minDimension * 0.42f)
-            drawCircle(Color.White.copy(alpha = 0.12f), radius = size.minDimension * 0.30f)
-        }
         Image(
             painter = painterResource(id = imageResId),
             contentDescription = contentDescription,
+            alpha = imageAlpha,
             modifier = Modifier.size(imageSize)
         )
+        Canvas(
+            modifier = Modifier
+                .size(imageSize * 0.925f)
+                .clip(CircleShape)
+        ) {
+            val shadowCenter = Offset(
+                x = size.width * (0.5f + shadowOffsetXRatio),
+                y = size.height * (0.5f + shadowOffsetYRatio)
+            )
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.Black.copy(alpha = shadowAlpha),
+                        Color.Black.copy(alpha = shadowAlpha * 0.62f),
+                        Color.Transparent
+                    ),
+                    center = shadowCenter,
+                    radius = size.minDimension * 0.78f
+                ),
+                radius = size.minDimension * 0.78f,
+                center = shadowCenter
+            )
+            drawCircle(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        Color.Black.copy(alpha = shadowAlpha * 0.82f)
+                    ),
+                    start = Offset(0f, 0f),
+                    end = Offset(size.width, size.height)
+                ),
+                radius = size.minDimension * 0.58f,
+                center = Offset(size.width / 2f, size.height / 2f)
+            )
+        }
         Text(
             text = label,
             modifier = Modifier
                 .align(labelAlignment)
-                .background(Color.Black.copy(alpha = 0.46f), RoundedCornerShape(8.dp))
-                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)), RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            color = Color.White,
+                .background(Color(0xCC061425), RoundedCornerShape(999.dp))
+                .border(BorderStroke(1.dp, Color(0xFF66C7FF).copy(alpha = 0.26f)), RoundedCornerShape(999.dp))
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+            color = WhiteText85,
             style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center
         )
     }
-}
-
-@Composable
-private fun RouteStagePill(
-    progress: Float,
-    modifier: Modifier = Modifier
-) {
-    val stage = when {
-        progress < 0.2f -> "LAUNCH"
-        progress < 0.8f -> "FLIGHT"
-        else -> "ARRIVAL"
-    }
-
-    Text(
-        text = stage,
-        modifier = modifier
-            .padding(top = 6.dp)
-            .background(Color.Black.copy(alpha = 0.34f), RoundedCornerShape(8.dp))
-            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)), RoundedCornerShape(8.dp))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        color = Color.White.copy(alpha = 0.86f),
-        style = MaterialTheme.typography.labelSmall,
-        textAlign = TextAlign.Center
-    )
 }

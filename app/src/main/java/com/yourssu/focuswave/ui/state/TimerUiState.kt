@@ -1,6 +1,5 @@
 package com.yourssu.focuswave.ui.state
 
-import kotlin.math.roundToInt
 import kotlin.random.Random
 
 data class TimerUiState(
@@ -11,7 +10,7 @@ data class TimerUiState(
     val phase: TimerPhase = TimerPhase.READY,
     val isRunning: Boolean = false,
     val activePhase: TimerPhase = TimerPhase.FOCUS,
-    val soundTracks: List<SoundTrackUiState> = defaultSoundTracks,
+    val soundMixer: SoundMixerUiState = SoundMixerUiState(),
     val pathSeed: Int = Random.nextInt()
 ) {
     val formattedTime: String
@@ -62,31 +61,6 @@ enum class TimerPhase {
     FINISHED
 }
 
-data class SoundTrackUiState(
-    val id: SoundTrackId,
-    val title: String,
-    val isEnabled: Boolean = false,
-    val volume: Float = DEFAULT_VOLUME
-) {
-    val volumePercent: Int
-        get() = (volume.coerceIn(0f, 1f) * 100).roundToInt()
-}
-
-enum class SoundTrackId {
-    Rain,
-    Ocean,
-    Cafe,
-    Space
-}
-
 const val DEFAULT_FOCUS_MINUTES = 25
 const val DEFAULT_BREAK_MINUTES = 5
 const val SECONDS_PER_MINUTE = 60
-private const val DEFAULT_VOLUME = 0.5f
-
-val defaultSoundTracks = listOf(
-    SoundTrackUiState(id = SoundTrackId.Rain, title = "Rain"),
-    SoundTrackUiState(id = SoundTrackId.Ocean, title = "Ocean"),
-    SoundTrackUiState(id = SoundTrackId.Cafe, title = "Cafe"),
-    SoundTrackUiState(id = SoundTrackId.Space, title = "Space")
-)

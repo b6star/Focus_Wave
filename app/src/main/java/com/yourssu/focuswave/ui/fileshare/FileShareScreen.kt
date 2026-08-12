@@ -53,6 +53,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.server.LocalFileServer
 import com.yourssu.focuswave.server.model.SharedSourceIdentity
+import com.yourssu.focuswave.ui.theme.WhiteText85
 import com.yourssu.focuswave.ui.state.FileShareUiState
 import java.io.File
 import java.io.FileNotFoundException
@@ -166,6 +167,7 @@ fun FileShareOverlay(
 
     var previewFile by remember { mutableStateOf<SharedFileUi?>(null) }
 
+    // 전체 영역
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -177,8 +179,8 @@ fun FileShareOverlay(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(screenScrollState)
+                .fillMaxSize()
+                //.verticalScroll(screenScrollState)
                 .padding(
                     start = 18.dp,
                     top = 18.dp,
@@ -193,8 +195,11 @@ fun FileShareOverlay(
                 .padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+
+            // 헤더 텍스트
             HeaderSection(onDismiss = onDismiss)
 
+            // 서버 정보
             FileShareServerCard(
                 uiState = uiState,
                 pcAccessUrl = pcAccessUrl,
@@ -206,14 +211,14 @@ fun FileShareOverlay(
                 onRefreshClick = fileServerManager::regenerateAuthCode
             )
 
-
-            //File Sharing panel
+            //파일 공유 패널
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .fillMaxSize()
+                    .weight(1f)
                     .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
                     .padding(10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(space = 10.dp,),
             ) {
                 Row(
                     modifier = Modifier
@@ -266,8 +271,9 @@ fun FileShareOverlay(
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 230.dp, max = 480.dp)
+                        .fillMaxSize()
+                        .weight(1f)
+                        .heightIn(min = 230.dp, max = 720.dp)
                 ) { page ->
                     when (page) {
                         0 -> DownloadSection(
@@ -373,7 +379,7 @@ private fun TrustDevicePromptDialog(
         ) {
             Text(
                 text = "신뢰 기기 추가",
-                color = Color.White,
+                color = WhiteText85,
                 style = MaterialTheme.typography.titleMedium
             )
 
@@ -448,7 +454,7 @@ private fun NameTrustedDeviceDialog(
         ) {
             Text(
                 text = "기기 이름",
-                color = Color.White,
+                color = WhiteText85,
                 style = MaterialTheme.typography.titleMedium
             )
 
@@ -468,8 +474,8 @@ private fun NameTrustedDeviceDialog(
                     Text("기기 이름")
                 },
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White,
-                    unfocusedTextColor = Color.White,
+                    focusedTextColor = WhiteText85,
+                    unfocusedTextColor = WhiteText85,
                     focusedBorderColor = Color(0xFF8A86E6),
                     unfocusedBorderColor = Color.White.copy(alpha = 0.28f),
                     focusedLabelColor = Color(0xFFB8B5FF),
@@ -539,7 +545,7 @@ private fun HeaderSection(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = "🚀 Focus Wave File Sharing",
-                color = Color.White,
+                color = WhiteText85,
                 style = MaterialTheme.typography.titleLarge
             )
         }
@@ -703,10 +709,9 @@ private fun DownloadSection(
     onPreviewClick: (SharedFileUi) -> Unit
 ) {
     SectionCard {
-
         Text(
             text = "💻 서버",
-            color = Color.White,
+            color = WhiteText85,
             style = MaterialTheme.typography.titleMedium
         )
 
@@ -721,7 +726,9 @@ private fun DownloadSection(
             EmptyText("아직 서버에 공유중인 파일이 없습니다.")
         } else {
             LazyColumn(
-                modifier = Modifier.heightIn(max = 360.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(receivedFiles) { file ->
@@ -748,20 +755,21 @@ private fun UploadSection(
     onSendClick: () -> Unit
 ) {
     SectionCard {
+        // 헤더
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Text(
                 text = "📱 폰 → 💻 서버",
-                color = Color.White,
+                color = WhiteText85,
                 style = MaterialTheme.typography.titleMedium
             )
 
             if (!selectedFiles.isEmpty()) {
                 Text(
                     text = "${selectedFiles.size} files",
-                    color = Color.White,
+                    color = WhiteText85,
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
@@ -774,7 +782,7 @@ private fun UploadSection(
             style = MaterialTheme.typography.bodySmall
         )
 
-
+        // 파일 선택 버튼
         Button(
             onClick = onPickFileClick,
             modifier = Modifier.fillMaxWidth(),
@@ -832,7 +840,7 @@ private fun SectionCard(
 ) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxSize()
             .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -869,7 +877,7 @@ private fun FileRow(
             ) {
                 Text(
                     text = file.name,
-                    color = Color.White,
+                    color = WhiteText85,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     softWrap = true
@@ -967,7 +975,7 @@ private fun FilePreviewDialog(
             ) {
                 Text(
                     text = file.name,
-                    color = Color.White,
+                    color = WhiteText85,
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,

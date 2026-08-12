@@ -12,30 +12,33 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import com.yourssu.focuswave.R
+import com.yourssu.focuswave.ui.state.SoundCategoryUiState
 import com.yourssu.focuswave.ui.state.SoundTrackId
-import com.yourssu.focuswave.ui.state.SoundTrackUiState
+import com.yourssu.focuswave.ui.state.defaultSoundCategories
 
 @Composable
 fun SoundPlaybackEffect(
-    soundTracks: List<SoundTrackUiState>
+    soundCategories: List<SoundCategoryUiState>
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val latestSoundTracks = rememberUpdatedState(soundTracks)
-    val players = remember(context) { createPlayers(context) }
+    val latestSoundCategories = rememberUpdatedState(soundCategories)
 
-    LaunchedEffect(soundTracks, players) {
-        applySoundTracks(players = players, soundTracks = soundTracks)
+    val players = remember(context) {
+        createPlayers(context)
+    }
+
+    LaunchedEffect(players, soundCategories) {
+        applySoundCategories(players = players, soundCategories = soundCategories)
     }
 
     DisposableEffect(lifecycleOwner, players) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> pauseAll(players)
-                Lifecycle.Event.ON_START -> applySoundTracks(
+                Lifecycle.Event.ON_START -> applySoundCategories(
                     players = players,
-                    soundTracks = latestSoundTracks.value
+                    soundCategories = latestSoundCategories.value
                 )
                 else -> Unit
             }
@@ -50,34 +53,40 @@ fun SoundPlaybackEffect(
     }
 }
 
-private fun createPlayers(context: Context): Map<SoundTrackId, MediaPlayer> {
+private fun createPlayers(
+    context: Context
+): Map<SoundTrackId, MediaPlayer> {
     val appContext = context.applicationContext
-    return SoundTrackId.entries.mapNotNull { id ->
-        MediaPlayer.create(appContext, id.rawResourceId)?.apply {
+    return defaultSoundCategories
+        .flatMap { it.tracks }
+        .distinctBy { it.id }
+        .mapNotNull { track ->
+            MediaPlayer.create(appContext, track.rawResId)?.apply {
             isLooping = true
             setVolume(0.5f, 0.5f)
-        }?.let { player -> id to player }
-    }.toMap()
+        }?.let { player -> track.id to player }
+        }.toMap()
 }
 
-private fun applySoundTracks(
+private fun applySoundCategories(
     players: Map<SoundTrackId, MediaPlayer>,
-    soundTracks: List<SoundTrackUiState>
+    soundCategories: List<SoundCategoryUiState>
 ) {
-    soundTracks.forEach { track ->
-        val player = players[track.id] ?: return@forEach
-        val volume = track.volume.coerceIn(0f, 1f)
+    players.forEach { (trackId, player) ->
+        val category = soundCategories.firstOrNull {
+            it.isEnabled && it.selectedTrackId == trackId
+        }
 
-        runCatching { player.setVolume(volume, volume) }
+        if (category != null) {
+            val volume = category.volume.coerceIn(0f, 1f)
+            runCatching { player.setVolume(volume, volume) }
 
-        if (track.isEnabled) {
             runCatching {
                 if (!player.isPlaying) player.start()
             }
         } else {
             runCatching {
-                if (player.isPlaying) player.pause()
-                //player.seekTo(0)
+                if (player.isPlaying ) player.pause()
             }
         }
     }
@@ -99,11 +108,3 @@ private fun releaseAll(players: Map<SoundTrackId, MediaPlayer>) {
         runCatching { player.release() }
     }
 }
-
-private val SoundTrackId.rawResourceId: Int
-    get() = when (this) {
-        SoundTrackId.Rain -> R.raw.rain_soft
-        SoundTrackId.Ocean -> R.raw.hastings_beach
-        SoundTrackId.Cafe -> R.raw.cafe_ambience
-        SoundTrackId.Space -> R.raw.space_ambient
-    }
