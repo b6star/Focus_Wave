@@ -1,4 +1,4 @@
-package com.yourssu.focuswave.ui.components
+package com.yourssu.focuswave.ui.sound
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image

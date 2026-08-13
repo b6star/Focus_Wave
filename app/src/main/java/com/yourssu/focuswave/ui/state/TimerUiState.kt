@@ -1,5 +1,6 @@
 package com.yourssu.focuswave.ui.state
 
+import com.yourssu.focuswave.MainActivity
 import kotlin.random.Random
 
 data class TimerUiState(
@@ -38,7 +39,6 @@ data class TimerUiState(
         get() = when (phase) {
             TimerPhase.READY -> "READY"
             TimerPhase.FOCUS -> "FOCUS"
-            TimerPhase.BREAK -> "BREAK"
             TimerPhase.PAUSED -> "PAUSED"
             TimerPhase.FINISHED -> "FINISHED"
         }
@@ -47,7 +47,7 @@ data class TimerUiState(
         get() = !isRunning
 
     val showBreakCountdown: Boolean
-        get() = phase == TimerPhase.BREAK && remainingSeconds in 1..5
+        get() = remainingSeconds in 1..5
 
     val breakCountdownNumber: Int
         get() = if (showBreakCountdown) remainingSeconds else 0
@@ -56,7 +56,6 @@ data class TimerUiState(
 enum class TimerPhase {
     READY,
     FOCUS,
-    BREAK,
     PAUSED,
     FINISHED
 }

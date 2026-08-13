@@ -18,28 +18,38 @@ import com.yourssu.focuswave.ui.state.defaultSoundCategories
 
 @Composable
 fun SoundPlaybackEffect(
-    soundCategories: List<SoundCategoryUiState>
+    soundCategories: List<SoundCategoryUiState>,
+    isPlaybackEnabled: Boolean
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val latestSoundCategories = rememberUpdatedState(soundCategories)
+    val latestIsPlaybackEnabled = rememberUpdatedState(isPlaybackEnabled)
 
     val players = remember(context) {
         createPlayers(context)
     }
 
-    LaunchedEffect(players, soundCategories) {
-        applySoundCategories(players = players, soundCategories = soundCategories)
+    LaunchedEffect(players, soundCategories, isPlaybackEnabled) {
+        if (isPlaybackEnabled) {
+            applySoundCategories(players = players, soundCategories = soundCategories)
+        } else {
+            pauseAll(players)
+        }
     }
 
     DisposableEffect(lifecycleOwner, players) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> pauseAll(players)
-                Lifecycle.Event.ON_START -> applySoundCategories(
-                    players = players,
-                    soundCategories = latestSoundCategories.value
-                )
+                Lifecycle.Event.ON_START -> {
+                    if (latestIsPlaybackEnabled.value) {
+                        applySoundCategories(
+                            players = players,
+                            soundCategories = latestSoundCategories.value
+                        )
+                    }
+                }
                 else -> Unit
             }
         }

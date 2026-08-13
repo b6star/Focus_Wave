@@ -1,6 +1,7 @@
 package com.yourssu.focuswave
 
 import android.app.Activity
+import android.content.Context
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -17,7 +18,6 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -43,7 +43,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -58,10 +57,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.ui.orbit.OrbitSection
-import com.yourssu.focuswave.ui.orbit.OrbitUtil
+import com.yourssu.focuswave.util.OrbitUtil
 import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.ui.chat.ChatOverlay
-import com.yourssu.focuswave.ui.components.SoundMixerPanel
+import com.yourssu.focuswave.ui.sound.SoundMixerPanel
 import com.yourssu.focuswave.ui.fileshare.FileShareOverlay
 import com.yourssu.focuswave.ui.sound.SoundPlaybackEffect
 import com.yourssu.focuswave.ui.state.SoundCategoryId
@@ -70,24 +69,31 @@ import com.yourssu.focuswave.ui.state.TimerPhase
 import com.yourssu.focuswave.ui.state.TimerUiState
 import com.yourssu.focuswave.ui.theme.FocusWaveTheme
 import com.yourssu.focuswave.ui.theme.WhiteText85
-import com.yourssu.focuswave.ui.timer.TimerViewModel
+import com.yourssu.focuswave.viewmodel.FocusViewModel
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.GpsFixed
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontStyle
+import androidx.core.content.edit
 import com.yourssu.focuswave.ui.theme.WhiteText100
-import kotlinx.coroutines.withTimeoutOrNull
+import com.yourssu.focuswave.util.rememberCurrentDateText
+import com.yourssu.focuswave.util.rememberCurrentTimeStatusText
+import com.yourssu.focuswave.util.rememberCurrentTimeText
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,20 +105,51 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+    companion object {
+        val PREFERENCES_NAME = "com.yourssu.focuswave"
+        val FOCUS_MODE = "focus-mode"
+        val AOD_MODE = "focus-aod"
+        val TIMER_MODE = "focus-timer"
+    }
 }
 
 @Composable
 fun MainScreen(
-    timerViewModel: TimerViewModel = viewModel(),
+    focusViewModel: FocusViewModel = viewModel(),
     fileServerManager: FileServerManager = viewModel()
 ) {
-    val timerUiState by timerViewModel.uiState.collectAsState()
+    val timerUiState by focusViewModel.uiState.collectAsState()
     val fileShareUiState by fileServerManager.uiState.collectAsState()
     var showFileShare by rememberSaveable { mutableStateOf(false) }
     var showChat by rememberSaveable { mutableStateOf(false) }
 
     val context = LocalContext.current
     val activity = context as? Activity
+
+    val prefs = remember(context) {
+        context.getSharedPreferences(
+            MainActivity.PREFERENCES_NAME,
+            Context.MODE_PRIVATE
+        )
+    }
+
+    var focusMode by rememberSaveable {
+        mutableStateOf(
+            prefs.getString(MainActivity.FOCUS_MODE,
+                MainActivity.TIMER_MODE)
+                ?: MainActivity.TIMER_MODE
+        )
+    }
+
+    LaunchedEffect(timerUiState.isRunning, focusMode) {
+        if (timerUiState.isRunning || focusMode == MainActivity.AOD_MODE) {
+            focusViewModel.turnSoundOn()
+        } else {
+            focusViewModel.turnSoundOff()
+        }
+
+    }
+
 
 
     DisposableEffect(timerUiState.isRunning, fileShareUiState.isRunning) {
@@ -128,19 +165,33 @@ fun MainScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         MainScreenContent(
+            focusMode = focusMode,
             timerUiState = timerUiState,
-            onStartClick = timerViewModel::startTimer,
-            onPauseClick = timerViewModel::pauseTimer,
-            onResetClick = timerViewModel::resetTimer,
-            onNewPathClick = timerViewModel::increasePathSeed,
+            onStartClick = focusViewModel::startTimer,
+            onPauseClick = focusViewModel::pauseTimer,
+            onResetClick = focusViewModel::resetTimer,
+            onNewPathClick = focusViewModel::increasePathSeed,
+            onDecreaseFocus = focusViewModel::decreaseFocusMinutes,
+            onIncreaseFocus = focusViewModel::increaseFocusMinutes,
+            onChangeModeClick = {
+                val nextMode = if (focusMode ==
+                    MainActivity.TIMER_MODE) {
+                    MainActivity.AOD_MODE
+                } else {
+                    MainActivity.TIMER_MODE
+                }
+                focusMode = nextMode
+                prefs.edit {
+                    putString(MainActivity.FOCUS_MODE, nextMode)
+                }
+            },
             onFileShareClick = { showFileShare = true },
             onChatClick = { showChat = true },
             onSettingsClick = { },
-            timerViewModel = timerViewModel,
-            onSoundEnabledChange = timerViewModel::setSoundEnabled,
-            onSoundVolumeChange = timerViewModel::setSoundVolume,
-            onSoundSelectionModeToggle = timerViewModel::toggleSoundSelectionMode,
-            onSoundTrackSelected = timerViewModel::setSoundTrack
+            onSoundEnabledChange = focusViewModel::setSoundEnabled,
+            onSoundVolumeChange = focusViewModel::setSoundVolume,
+            onSoundSelectionModeToggle = focusViewModel::toggleSoundSelectionMode,
+            onSoundTrackSelected = focusViewModel::setSoundTrack
         )
 
         if (showFileShare) {
@@ -165,40 +216,48 @@ fun MainScreen(
 
 @Composable
 private fun MainScreenContent(
+    focusMode: String,
     timerUiState: TimerUiState,
     onStartClick: () -> Unit,
     onPauseClick: () -> Unit,
     onResetClick: () -> Unit,
+    onChangeModeClick: () -> Unit,
     onNewPathClick: () -> Unit,
+    onDecreaseFocus: () -> Unit,
+    onIncreaseFocus: () -> Unit,
     onFileShareClick: () -> Unit,
     onChatClick: () -> Unit,
     onSettingsClick: () -> Unit,
-    timerViewModel: TimerViewModel,
     onSoundEnabledChange: (SoundCategoryId, Boolean) -> Unit,
     onSoundVolumeChange: (SoundCategoryId, Float) -> Unit,
     onSoundSelectionModeToggle: () -> Unit,
     onSoundTrackSelected: (SoundCategoryId, SoundTrackId) -> Unit,
 ) {
-    val playbackSoundCategories = if (timerUiState.phase == TimerPhase.PAUSED) {
-        timerUiState.soundMixer.categories.map { it.copy(isEnabled = false) }
-    } else {
-        timerUiState.soundMixer.categories
-    }
-
-    SoundPlaybackEffect(soundCategories = playbackSoundCategories)
+    SoundPlaybackEffect(
+        soundCategories = timerUiState.soundMixer.categories,
+        isPlaybackEnabled = timerUiState.soundMixer.isPlaybackEnabled
+    )
 
     FocusScreen(
+        focusMode = focusMode,
         uiState = timerUiState,
-        timerOverlay = {
-            TimerControlsPanel(
-                uiState = timerUiState,
-                onStartClick = onStartClick,
-                onPauseClick = onPauseClick,
-                onResetClick = onResetClick,
-                onNewPathClick = onNewPathClick,
-                onDecreaseFocus = timerViewModel::decreaseFocusMinutes,
-                onIncreaseFocus = timerViewModel::increaseFocusMinutes
-            )
+        modeHeader = {
+            if (focusMode == MainActivity.TIMER_MODE) {
+                TimerControlsPanel(
+                    uiState = timerUiState,
+                    onStartClick = onStartClick,
+                    onPauseClick = onPauseClick,
+                    onResetClick = onResetClick,
+                    onChangeModeClick = onChangeModeClick,
+                    onNewPathClick = onNewPathClick,
+                    onDecreaseFocus = onDecreaseFocus,
+                    onIncreaseFocus = onIncreaseFocus
+                )
+            } else {
+                AodPanel(
+                    onChangeModeClick = onChangeModeClick
+                )
+            }
         },
         countdownOverlay = {
             BreakCountdownOverlay(
@@ -225,11 +284,11 @@ private fun MainScreenContent(
         }
     )
 }
-
 @Composable
 private fun FocusScreen(
+    focusMode: String,
     uiState: TimerUiState,
-    timerOverlay: @Composable () -> Unit,
+    modeHeader: @Composable () -> Unit,
     countdownOverlay: @Composable () -> Unit,
     soundMixerPanel: @Composable () -> Unit,
     bottomNavigation: @Composable () -> Unit = {},
@@ -237,7 +296,11 @@ private fun FocusScreen(
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier.fillMaxSize()) {
-        FocusScene()
+        if (focusMode == MainActivity.TIMER_MODE) {
+            FocusScene(bgImagePath = R.drawable.grok_space_03)
+        } else {
+            FocusScene(bgImagePath = R.drawable.grok_space_04, overlayDarkness = 0.5f)
+        }
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
@@ -250,7 +313,7 @@ private fun FocusScreen(
             ) {
                 val compactHeight = maxHeight < 720.dp
                 val horizontalPadding = if (compactHeight) 18.dp else 26.dp
-                val verticalPadding = if (compactHeight) 12.dp else 24.dp
+                val verticalPadding = if (compactHeight) 2.dp else 4.dp
                 val sectionGap = if (compactHeight) 10.dp else 14.dp
                 val orbitMinHeight = if (compactHeight) 260.dp else 420.dp
 
@@ -261,16 +324,27 @@ private fun FocusScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(sectionGap)
                 ) {
-                    timerOverlay()
+                    modeHeader()
+                    if (focusMode == MainActivity.TIMER_MODE) {
 
-                    OrbitSection(
-                        progress = uiState.progress,
-                        pathSeed = uiState.pathSeed,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1.35f)
-                            .heightIn(min = orbitMinHeight)
-                    )
+                        OrbitSection(
+                            progress = uiState.progress,
+                            pathSeed = uiState.pathSeed,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1.35f)
+                                .heightIn(min = orbitMinHeight)
+                        )
+                    }
+                    else {
+                        // Keeps the sound mixer anchored near the bottom in AOD mode.
+                        Spacer(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1.35f)
+                                .heightIn(min = orbitMinHeight)
+                        )
+                    }
 
                     soundMixerPanel()
                 }
@@ -284,11 +358,13 @@ private fun FocusScreen(
 
 @Composable
 private fun FocusScene(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    overlayDarkness: Float = 0.5f,
+    bgImagePath: Int
 ) {
     Box(modifier = modifier.fillMaxSize()) {
         Image(
-            painter = painterResource(id = R.drawable.grok_space_03),
+            painter = painterResource(id = bgImagePath),
             contentDescription = "Space background",
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
@@ -299,9 +375,9 @@ private fun FocusScene(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0x90000006),
-                            Color(0x78000410),
-                            Color(0xA0000006)
+                            Color(0xFF000006).copy(alpha = (overlayDarkness * 1.35f).coerceIn(0f, 1f)),
+                            Color(0xFF000410).copy(alpha = (overlayDarkness * 0.75f).coerceIn(0f, 1f)),
+                            Color(0xFF000006).copy(alpha = (overlayDarkness * 1.35f).coerceIn(0f, 1f))
                         )
                     )
                 )
@@ -310,10 +386,117 @@ private fun FocusScene(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(20.dp)
-                .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), RoundedCornerShape(26.dp))
+                .border(
+                    BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
+                    RoundedCornerShape(26.dp)
+                )
         )
     }
 }
+
+
+@Composable
+private fun AodPanel(
+    onChangeModeClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 22.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
+        // 헤더
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AccessTime,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.92f),
+                    modifier = Modifier.size(22.dp)
+                )
+                Text(
+                    text = "Always On Display",
+                    color = Color.White.copy(alpha = 0.92f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CompactIconButton(
+                    icon = Icons.Default.SwapHoriz,
+                    onClick = onChangeModeClick
+                )
+            }
+        }
+
+
+        Text(
+            text = rememberCurrentDateText(),
+            color = Color.White.copy(alpha = 0.72f),
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center
+        )
+
+        val timeText = rememberCurrentTimeText()
+        val (time, meridiem) = timeText.split("-").let { parts ->
+            parts[0] to parts.getOrElse(1) { "" }
+        }
+
+
+        // 시간 텍스트
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(
+                space = 10.dp,
+                alignment = Alignment.CenterHorizontally
+            )
+        ) {
+
+            Text(
+                text = time,
+                color = WhiteText100.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.displayLarge,
+                fontSize = 92.sp,
+                fontWeight = FontWeight.Thin,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.alignByBaseline()
+            )
+            Text(
+                text = meridiem,
+                color = WhiteText100.copy(alpha = 0.75f),
+                style = MaterialTheme.typography.bodyMedium,
+                fontSize = 66.sp,
+                fontWeight = FontWeight.Thin,
+                modifier = Modifier.alignByBaseline()
+            )
+        }
+
+
+
+        Text(
+            text = rememberCurrentTimeStatusText(),
+            color = Color.White.copy(alpha = 0.72f),
+            style = MaterialTheme.typography.headlineSmall,
+            fontStyle = FontStyle.Italic,
+            fontWeight = FontWeight.Thin,
+            textAlign = TextAlign.Center
+        )
+
+
+    }
+}
+
 
 @Composable
 private fun TimerControlsPanel(
@@ -321,6 +504,7 @@ private fun TimerControlsPanel(
     onStartClick: () -> Unit,
     onPauseClick: () -> Unit,
     onResetClick: () -> Unit,
+    onChangeModeClick: () -> Unit,
     onNewPathClick: () -> Unit,
     onDecreaseFocus: () -> Unit,
     onIncreaseFocus: () -> Unit,
@@ -370,9 +554,15 @@ private fun TimerControlsPanel(
                     onClick = onResetClick
                 )
                 CompactIconButton(
-                    icon = Icons.Default.Settings,
+                    icon = Icons.Default.SwapHoriz,
+                    onClick = onChangeModeClick
+                )
+                /*
+                CompactIconButton(
+                    icon = Icons.Default.Route,
                     onClick = onNewPathClick
                 )
+                 */
             }
         }
 
@@ -382,7 +572,7 @@ private fun TimerControlsPanel(
             color = WhiteText100.copy(alpha = 0.85f),
             style = MaterialTheme.typography.displayLarge,
             fontSize = 92.sp,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.Thin,
             letterSpacing = 0.sp,
             textAlign = TextAlign.Center
         )
@@ -574,7 +764,7 @@ private fun FocusBottomNavigation(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .padding(start = 20.dp, end = 20.dp, bottom = 14.dp),
         contentAlignment = Alignment.Center
     ) {
         Row(
@@ -647,185 +837,6 @@ private fun BottomNavButton(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun TimerDurationSettings(
-    focusMinutes: Int,
-    breakMinutes: Int,
-    enabled: Boolean,
-    onDecreaseFocus: () -> Unit,
-    onIncreaseFocus: () -> Unit,
-    onDecreaseBreak: () -> Unit,
-    onIncreaseBreak: () -> Unit,
-) {
-    Row(
-        horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        DurationStepper(
-            label = "FOCUS",
-            minutes = focusMinutes,
-            enabled = enabled,
-            onDecrease = onDecreaseFocus,
-            onIncrease = onIncreaseFocus
-        )
-
-        /*
-        DurationStepper(
-            label = "BREAK",
-            minutes = breakMinutes,
-            enabled = enabled,
-            onDecrease = onDecreaseBreak,
-            onIncrease = onIncreaseBreak
-        )
-        */
-    }
-}
-
-@Composable
-private fun DurationStepper(
-    label: String,
-    minutes: Int,
-    enabled: Boolean,
-    onDecrease: () -> Unit,
-    onIncrease: () -> Unit
-) {
-    val shape = RoundedCornerShape(8.dp)
-
-    Row(
-        modifier = Modifier
-            .width(108.dp)
-            .background(Color.White.copy(alpha = 0.1f), shape)
-            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.16f)), shape)
-            .padding(horizontal = 4.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        StepperButton(
-            text = "-",
-            enabled = enabled,
-            onClick = onDecrease
-        )
-
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = label,
-                color = Color.White.copy(alpha = 0.72f),
-                style = MaterialTheme.typography.labelSmall
-            )
-            Text(
-                text = "${minutes}m",
-                color = WhiteText85,
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-
-        StepperButton(
-            text = "+",
-            enabled = enabled,
-            onClick = onIncrease
-        )
-    }
-}
-
-@Composable
-private fun StepperButton(
-    text: String,
-    enabled: Boolean,
-    onClick: () -> Unit
-) {
-    val shape = RoundedCornerShape(10.dp)
-    val contentAlpha = if (enabled) 1f else 0.38f
-
-    Box(
-        modifier = Modifier
-            .size(30.dp)
-            .background(Color.White.copy(alpha = if (enabled) 0.20f else 0.08f), shape)
-            .border(
-                BorderStroke(
-                    1.dp,
-                    Color.White.copy(alpha = if (enabled) 0.34f else 0.12f)
-                ),
-                shape
-            )
-            .pointerInput(enabled) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    if (!enabled) {
-                        waitForUpOrCancellation()
-                        return@awaitEachGesture
-                    }
-                    down.consume()
-                    val releasedBeforeLongPress = withTimeoutOrNull(450L) {
-                        waitForUpOrCancellation()
-                    }
-                    if (releasedBeforeLongPress != null) {
-                        releasedBeforeLongPress.consume()
-                        onClick()
-                        return@awaitEachGesture
-                    }
-                    onClick()
-                    while (true) {
-                        val up = withTimeoutOrNull(100L) {
-                            waitForUpOrCancellation()
-                        }
-                        if (up != null) {
-                            up.consume()
-                            break
-                        }
-                        onClick()
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = text,
-            color = Color.White.copy(alpha = contentAlpha),
-            style = MaterialTheme.typography.titleMedium,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
-private fun TimerActionButton(
-    icon: ImageVector   ,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true
-) {
-    val shape = CircleShape
-
-    ElevatedButton(
-        onClick = onClick,
-        enabled = enabled,
-        modifier = modifier
-            .size(44.dp)
-            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.18f)), shape),
-        shape = shape,
-        elevation = ButtonDefaults.elevatedButtonElevation(
-            defaultElevation = 5.dp,
-            pressedElevation = 1.dp,
-            hoveredElevation = 7.dp,
-            focusedElevation = 7.dp
-        ),
-        colors = ButtonDefaults.elevatedButtonColors(
-            containerColor = Color.White.copy(alpha = 0.2f),
-            contentColor = Color.White,
-            disabledContainerColor = Color.White.copy(alpha = 0.1f),
-            disabledContentColor = Color.White.copy(alpha = 0.42f)
-        ),
-        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(24.dp)
-        )
-    }
-}
-
 @Composable
 private fun BreakCountdownOverlay(
     isVisible: Boolean,
@@ -878,7 +889,7 @@ fun MainScreenPreview() {
     FocusWaveTheme {
         FocusScreen(
             uiState = previewState,
-            timerOverlay = {
+            modeHeader = {
                 TimerControlsPanel(
                     uiState = previewState,
                     onStartClick = {},
@@ -886,13 +897,15 @@ fun MainScreenPreview() {
                     onResetClick = {},
                     onNewPathClick = {},
                     onIncreaseFocus = {},
-                    onDecreaseFocus = {}
+                    onDecreaseFocus = {},
+                    onChangeModeClick = {}
                 )
             },
             countdownOverlay = {},
             soundMixerPanel = {},
             bottomNavigation = {},
             fileShareOverlay = {},
+            focusMode = MainActivity.TIMER_MODE
         )
     }
 }
