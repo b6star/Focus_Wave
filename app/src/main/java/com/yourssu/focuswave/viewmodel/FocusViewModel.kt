@@ -1,4 +1,4 @@
-package com.yourssu.focuswave.ui.timer
+package com.yourssu.focuswave.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,12 +15,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
-class TimerViewModel : ViewModel() {
+class FocusViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(TimerUiState())
     val uiState: StateFlow<TimerUiState> = _uiState.asStateFlow()
 
     private var timerJob: Job? = null
-    private var pausedSoundSnapshot: Map<SoundCategoryId, Float> = emptyMap()
 
     fun updateFocusMinutes(minutes: Int) {
         val nextMinutes = minutes.coerceIn(MIN_MINUTES, MAX_MINUTES)
@@ -55,7 +54,7 @@ class TimerViewModel : ViewModel() {
         when (currentState.phase) {
             TimerPhase.READY, TimerPhase.FINISHED -> startFocusPhase()
             TimerPhase.PAUSED -> resumeTimer()
-            TimerPhase.FOCUS, TimerPhase.BREAK -> resumeTimer()
+            TimerPhase.FOCUS -> resumeTimer()
         }
     }
 
@@ -64,10 +63,6 @@ class TimerViewModel : ViewModel() {
         timerJob = null
         _uiState.update { currentState ->
             if (!currentState.isRunning) return@update currentState
-
-            pausedSoundSnapshot = currentState.soundMixer.categories
-                .filter { it.isEnabled }
-                .associate { it.id to it.volume }
 
             currentState.copy(
                 phase = TimerPhase.PAUSED,
@@ -79,7 +74,6 @@ class TimerViewModel : ViewModel() {
     fun resetTimer() {
         timerJob?.cancel()
         timerJob = null
-        pausedSoundSnapshot = emptyMap()
         _uiState.update { currentState ->
             currentState.copy(
                 totalSeconds = currentState.focusMinutes * SECONDS_PER_MINUTE,
@@ -88,14 +82,13 @@ class TimerViewModel : ViewModel() {
                 activePhase = TimerPhase.FOCUS,
                 isRunning = false,
                 pathSeed = currentState.pathSeed + 1
-            ).withAllSoundsStopped()
+            )
         }
     }
 
     fun startFocusPhase() {
         timerJob?.cancel()
         timerJob = null
-        pausedSoundSnapshot = emptyMap()
         _uiState.update { currentState ->
             currentState.copy(
                 totalSeconds = currentState.focusMinutes * SECONDS_PER_MINUTE,
@@ -108,19 +101,16 @@ class TimerViewModel : ViewModel() {
         launchTimer()
     }
 
-    fun startBreakPhase() {
-        timerJob?.cancel()
-        timerJob = null
+    fun turnSoundOn() {
         _uiState.update { currentState ->
-            currentState.copy(
-                totalSeconds = currentState.breakMinutes * SECONDS_PER_MINUTE,
-                remainingSeconds = currentState.breakMinutes * SECONDS_PER_MINUTE,
-                phase = TimerPhase.BREAK,
-                activePhase = TimerPhase.BREAK,
-                isRunning = true
-            )
+            currentState.withSoundPlaybackEnabled(true)
         }
-        launchTimer()
+    }
+
+    fun turnSoundOff() {
+        _uiState.update { currentState ->
+            currentState.withSoundPlaybackEnabled(false)
+        }
     }
 
     fun setSoundEnabled(id: SoundCategoryId, isEnabled: Boolean) {
@@ -188,35 +178,17 @@ class TimerViewModel : ViewModel() {
         _uiState.update { currentState ->
             val resumePhase = when (currentState.phase) {
                 TimerPhase.PAUSED -> currentState.activePhase
-                TimerPhase.FOCUS, TimerPhase.BREAK -> currentState.phase
-                TimerPhase.READY, TimerPhase.FINISHED -> TimerPhase.FOCUS
+                TimerPhase.FOCUS, TimerPhase.READY, TimerPhase.FINISHED -> TimerPhase.FOCUS
             }
-            val restoredSoundCategories = restorePausedSoundCategories(currentState)
-            pausedSoundSnapshot = emptyMap()
 
             currentState.copy(
                 phase = resumePhase,
                 activePhase = resumePhase,
-                isRunning = true,
-                soundMixer = currentState.soundMixer.copy(categories = restoredSoundCategories)
+                isRunning = true
             )
         }
         launchTimer()
     }
-
-    private fun restorePausedSoundCategories(currentState: TimerUiState) =
-        if (currentState.phase == TimerPhase.PAUSED) {
-            currentState.soundMixer.categories.map { category ->
-                val pausedVolume = pausedSoundSnapshot[category.id]
-                when {
-                    pausedVolume == null -> category.copy(isEnabled = false)
-                    category.isEnabled -> category.copy(isEnabled = true, volume = pausedVolume)
-                    else -> category.copy(isEnabled = false)
-                }
-            }
-        } else {
-            currentState.soundMixer.categories
-        }
 
     private fun launchTimer() {
         if (timerJob?.isActive == true) return
@@ -248,26 +220,13 @@ class TimerViewModel : ViewModel() {
                 TimerPhase.FOCUS -> {
                     shouldContinue = false
                     timerJob = null
-                    pausedSoundSnapshot = emptyMap()
 
                     currentState.copy(
                         remainingSeconds = 0,
                         phase = TimerPhase.FINISHED,
                         activePhase = TimerPhase.FINISHED,
                         isRunning = false
-                    ).withAllSoundsStopped()
-                }
-
-                TimerPhase.BREAK -> {
-                    shouldContinue = false
-                    timerJob = null
-                    pausedSoundSnapshot = emptyMap()
-                    currentState.copy(
-                        remainingSeconds = 0,
-                        phase = TimerPhase.FINISHED,
-                        activePhase = TimerPhase.FINISHED,
-                        isRunning = false
-                    ).withAllSoundsStopped()
+                    )
                 }
 
                 TimerPhase.READY,
@@ -284,9 +243,9 @@ class TimerViewModel : ViewModel() {
     }
 }
 
-private fun TimerUiState.withAllSoundsStopped(): TimerUiState = copy(
+private fun TimerUiState.withSoundPlaybackEnabled(isEnabled: Boolean): TimerUiState = copy(
     soundMixer = soundMixer.copy(
-        categories = soundMixer.categories.map { it.copy(isEnabled = false) }
+        isPlaybackEnabled = isEnabled
     )
 )
 

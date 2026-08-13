@@ -5,6 +5,7 @@ import kotlin.math.roundToInt
 
 data class SoundMixerUiState(
     val categories: List<SoundCategoryUiState> = defaultSoundCategories,
+    val isPlaybackEnabled: Boolean = false,
     val isSelectionMode: Boolean = false
 )
 

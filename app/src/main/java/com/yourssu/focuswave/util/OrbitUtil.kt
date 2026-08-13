@@ -1,4 +1,4 @@
-package com.yourssu.focuswave.ui.orbit
+package com.yourssu.focuswave.util
 
 import androidx.compose.ui.graphics.Path
 import com.yourssu.focuswave.ui.state.TimerPhase
@@ -35,7 +35,6 @@ object OrbitUtil {
         return when (phase) {
             TimerPhase.READY -> "Spaceship standing by"
             TimerPhase.PAUSED -> "Mission paused"
-            TimerPhase.BREAK -> "Entering rest orbit"
             TimerPhase.FINISHED -> "Goal arrival complete"
             TimerPhase.FOCUS -> when {
                 !isRunning -> "Mission paused"
