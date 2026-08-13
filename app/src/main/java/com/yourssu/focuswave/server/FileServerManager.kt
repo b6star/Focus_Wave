@@ -33,7 +33,7 @@ import java.net.NetworkInterface
 import java.text.Normalizer
 
 class FileServerManager(application: Application) : AndroidViewModel(application) {
-    private var server: LocalFileServer? = null
+    private var server: LocalServer? = null
     private val secureRandom = SecureRandom()
 
     private val _uiState = MutableStateFlow(FileShareUiState())
@@ -51,7 +51,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
 
         val authCode = generateAuthCode()
         val application = getApplication<Application>()
-        val newServer = LocalFileServer(
+        val newServer = LocalServer(
             appFilesDirectory = application.filesDir,
             authCode = authCode,
             homePage = loadHomePage(),
@@ -134,7 +134,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
 
 
     fun getUploadedFiles(): List<SharedFileUi> {
-        val directory = LocalFileServer.sharedDirectory(getApplication<Application>().filesDir)
+        val directory = LocalServer.sharedDirectory(getApplication<Application>().filesDir)
 
         if (!directory.exists() || !directory.isDirectory) {
             return emptyList()
@@ -306,9 +306,9 @@ class FileServerManager(application: Application) : AndroidViewModel(application
 
     private fun findWifiServerAddress(): String? {
         findReachablePrivateIpv4Address()
-            ?.let { return "http://${it}:${LocalFileServer.PORT}" }
+            ?.let { return "http://${it}:${LocalServer.PORT}" }
         findReachableGlobalIpv6Address()
-            ?.let { return "http://[${it}]:${LocalFileServer.PORT}" }
+            ?.let { return "http://[${it}]:${LocalServer.PORT}" }
         return null
     }
 
@@ -366,7 +366,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     fun saveUploadedFileToUri(file: SharedFileUi, destinationUri: Uri) {
         val application = getApplication<Application>()
 
-        val sourceFile = File(LocalFileServer.sharedDirectory(application.filesDir), file.name)
+        val sourceFile = File(LocalServer.sharedDirectory(application.filesDir), file.name)
 
         if (!sourceFile.exists()) return
 
@@ -461,7 +461,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     private fun clearFileShareRecords() {
         val appFilesDir = getApplication<Application>().filesDir
 
-        File(appFilesDir,  LocalFileServer.SHARED_DIRECTORY_NAME)
+        File(appFilesDir,  LocalServer.SHARED_DIRECTORY_NAME)
             .takeIf { it.exists() }
             ?.deleteRecursively()
     }

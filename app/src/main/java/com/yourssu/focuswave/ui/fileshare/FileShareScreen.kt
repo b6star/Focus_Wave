@@ -51,7 +51,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
-import com.yourssu.focuswave.server.LocalFileServer
+import com.yourssu.focuswave.server.LocalServer
 import com.yourssu.focuswave.server.model.SharedSourceIdentity
 import com.yourssu.focuswave.ui.theme.WhiteText85
 import com.yourssu.focuswave.ui.state.FileShareUiState
@@ -1147,7 +1147,7 @@ private fun Uri.toSharedFileUi(
 }
 
 private fun Context.loadSharedFiles(): List<SharedFileUi> {
-    val directory = LocalFileServer.sharedDirectory(applicationContext.filesDir)
+    val directory = LocalServer.sharedDirectory(applicationContext.filesDir)
     Log.d(FILE_SHARE_LOG_TAG, "app refresh directory: ${directory.absolutePath}")
     if (!directory.exists()) {
         Log.d(FILE_SHARE_LOG_TAG, "app refresh files found: count=0")
@@ -1183,7 +1183,7 @@ private fun Context.stageFilesForPc(files: List<SharedFileUi>): Int {
         throw IOException("공유할 파일을 먼저 선택해주세요.")
     }
 
-    val directory = LocalFileServer.sharedDirectory(applicationContext.filesDir)
+    val directory = LocalServer.sharedDirectory(applicationContext.filesDir)
     if (!directory.exists() && !directory.mkdirs() && !directory.isDirectory) {
         throw IOException("공유 저장 폴더를 만들지 못했습니다.")
     }
@@ -1316,7 +1316,7 @@ private suspend fun Context.saveSharedFileToDownloads(
 }
 
 private fun Context.requireReadableSharedFile(fileName: String): File {
-    val directory = LocalFileServer.sharedDirectory(applicationContext.filesDir)
+    val directory = LocalServer.sharedDirectory(applicationContext.filesDir)
     val source = File(directory, fileName)
     Log.d(
         FILE_SHARE_LOG_TAG,
