@@ -27,7 +27,7 @@ class ChatRoutes(
 ) {
     private val messageLock = Any()
     private val messages = mutableListOf<ChatMessage>()
-    private val eventStreams = ConcurrentHashMap<String, SseEventStream>()
+    private val eventStreams = ConcurrentHashMap<String, SseEventQueue>()
     private var nextSequence = 1L
 
     // 현재 서버 메모리에 남아있는 최근 채팅 목록을 요청 클라이언트 키로 암호화해 반환한다.
@@ -102,12 +102,12 @@ class ChatRoutes(
             return jsonError(Response.Status.UNAUTHORIZED, "Encryption key is missing")
         }
 
-        val stream = SseEventStream()
-        eventStreams[token] = stream
-        stream.sendComment("connected")
-        stream.sendMessage("""{"type":"connected"}""")
+        val eventQueue = SseEventQueue()
+        eventStreams[token] = eventQueue
+        eventQueue.enqueueComment("connected")
+        eventQueue.enqueueDefaultEvent("""{"type":"connected"}""")
 
-        return SseResponse(stream)
+        return SseResponse(eventQueue)
     }
 
     // 안드로이드 호스트 앱 내부에서 작성한 평문 메시지를 채팅방에 추가한다.
@@ -160,14 +160,14 @@ class ChatRoutes(
 
     // 저장된 새 메시지를 각 클라이언트의 AES 키로 다시 암호화해 SSE로 전송한다.
     private fun broadcastMessage(message: ChatMessage) {
-        eventStreams.forEach { (token, stream) ->
+        eventStreams.forEach { (token, eventQueue) ->
             val aesKey = clientAesKeys[token] ?: return@forEach
             val envelope = encryptPayload(messageToJson(message).toString(), aesKey)
             val eventData =
                 """{"nonce":${jsonString(envelope.nonceBase64)},"payload":${jsonString(envelope.encryptedBase64)}}"""
 
             runCatching {
-                stream.sendEvent("chat-message", eventData)
+                eventQueue.enqueueNamedEvent("chat-message", eventData)
             }.onFailure { error ->
                 logDebug("chat event failed: token=$token, reason=${error.message}")
                 eventStreams.remove(token)

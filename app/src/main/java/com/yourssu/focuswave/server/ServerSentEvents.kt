@@ -2,13 +2,12 @@ package com.yourssu.focuswave.server
 
 import fi.iki.elonen.NanoHTTPD
 import java.io.IOException
-import java.io.InputStream
 import java.io.OutputStream
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.LinkedBlockingQueue
 
 class SseResponse(
-    private val stream: SseEventStream
+    private val eventQueue: SseEventQueue
 ) : NanoHTTPD.Response(
     NanoHTTPD.Response.Status.OK,
     "text/event-stream; charset=utf-8",
@@ -31,7 +30,7 @@ class SseResponse(
             outputStream.flush()
 
             while (true) {
-                val chunk = stream.takeChunk()
+                val chunk = eventQueue.takeChunk()
                 outputStream.write(Integer.toHexString(chunk.size).toByteArray(StandardCharsets.US_ASCII))
                 outputStream.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
                 outputStream.write(chunk)
@@ -39,60 +38,37 @@ class SseResponse(
                 outputStream.flush()
             }
         } catch (_: IOException) {
-            stream.close()
+            // Client disconnected; stop the SSE write loop.
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
-            stream.close()
         }
     }
 }
 
-class SseEventStream : InputStream() {
+class SseEventQueue {
+    // SSE 전송 스레드는 take()로 대기하고, 다른 요청 처리 스레드는 offer()로 이벤트를 넣는다.
     private val chunks = LinkedBlockingQueue<ByteArray>()
-    private var currentChunk = ByteArray(0)
-    private var currentIndex = 0
 
-    fun sendComment(comment: String) {
+    // 브라우저 JS 이벤트로 전달되지 않는 SSE comment를 큐에 넣는다.
+    fun enqueueComment(comment: String) {
         enqueue(": $comment\n\n")
     }
 
-    fun sendEvent(event: String, data: String) {
-        enqueue("event: $event\ndata: $data\n\n")
+    // addEventListener(eventName)로 받을 수 있는 이름 있는 SSE 이벤트를 큐에 넣는다.
+    fun enqueueNamedEvent(eventName: String, data: String) {
+        enqueue("event: $eventName\ndata: $data\n\n")
     }
 
-    fun sendMessage(data: String) {
+    // onmessage로 받을 수 있는 기본 message 이벤트를 큐에 넣는다.
+    fun enqueueDefaultEvent(data: String) {
         enqueue("data: $data\n\n")
     }
 
+    // 큐가 비어 있으면 이벤트가 들어올 때까지 SSE 전송 스레드를 block한다.
     @Throws(InterruptedException::class)
     fun takeChunk(): ByteArray = chunks.take()
 
-    override fun read(): Int {
-        while (currentIndex >= currentChunk.size) {
-            currentChunk = chunks.take()
-            currentIndex = 0
-        }
-
-        return currentChunk[currentIndex++].toInt() and 0xff
-    }
-
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        if (length == 0) return 0
-
-        val firstByte = read()
-        if (firstByte < 0) return -1
-
-        buffer[offset] = firstByte.toByte()
-        var copied = 1
-
-        while (copied < length && currentIndex < currentChunk.size) {
-            buffer[offset + copied] = currentChunk[currentIndex++]
-            copied++
-        }
-
-        return copied
-    }
-
+    // SSE 포맷 문자열을 UTF-8 바이트로 바꿔 thread-safe 큐에 추가한다.
     private fun enqueue(payload: String) {
         chunks.offer(payload.toByteArray(Charsets.UTF_8))
     }

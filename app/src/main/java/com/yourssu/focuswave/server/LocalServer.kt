@@ -38,7 +38,7 @@ class LocalServer(
     private val fileOwners = ConcurrentHashMap<String, SharedFileOwner>()  // key-file name, value-owner
     private val clientSessions = ConcurrentHashMap<String, SharedSourceIdentity>()  // key-session token, value-id
     private val pendingTrustedTokenGrants = ConcurrentHashMap<String, String>() // key-session Token, value-trusted Token
-    private val trustedDeviceEventStreams = ConcurrentHashMap<String, SseEventStream>() // key-session token, value-해당 브라우저의 sse 출력 스트림
+    private val trustedDeviceEventStreams = ConcurrentHashMap<String, SseEventQueue>() // key-session token, value-해당 브라우저의 sse 이벤트 큐
 
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     private val serverKeyPair = FileShareCrypto.generateServerKeyPair()
@@ -363,30 +363,30 @@ class LocalServer(
         val sessionToken = getRequestToken(session)
             ?: return unauthorizedResponse()
 
-        val stream = SseEventStream()
-        trustedDeviceEventStreams[sessionToken] = stream
+        val eventQueue = SseEventQueue()
+        trustedDeviceEventStreams[sessionToken] = eventQueue
         logDebug("trusted event stream registered: sessionToken=$sessionToken")
 
-        stream.sendComment("connected")
-        stream.sendMessage("""{"type":"connected"}""")
+        eventQueue.enqueueComment("connected")
+        eventQueue.enqueueDefaultEvent("""{"type":"connected"}""")
 
         if (pendingTrustedTokenGrants.containsKey(sessionToken)) {
             notifyTrustedDeviceApproved(sessionToken)
         }
 
-        return SseResponse(stream)
+        return SseResponse(eventQueue)
     }
 
 
     fun notifyTrustedDeviceApproved(sessionToken: String) {
-        val stream = trustedDeviceEventStreams[sessionToken]
-        if (stream == null) {
+        val eventQueue = trustedDeviceEventStreams[sessionToken]
+        if (eventQueue == null) {
             logDebug("trusted approved event skipped: no stream for sessionToken=$sessionToken")
             return
         }
         runCatching {
-            stream.sendEvent("trusted-device-approved", "{}")
-            stream.sendMessage("""{"type":"trusted-device-approved"}""")
+            eventQueue.enqueueNamedEvent("trusted-device-approved", "{}")
+            eventQueue.enqueueDefaultEvent("""{"type":"trusted-device-approved"}""")
             logDebug("trusted approved event sent: sessionToken=$sessionToken")
         }.onFailure {
             logDebug("trusted approved event failed: ${it.message}")
