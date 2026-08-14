@@ -87,21 +87,21 @@ fun rememberCurrentTimeStatusText(): String {
 private fun currentTimeStatusText() = when (LocalTime.now().hour) {
     in 0..4 -> listOf(
         "Everything's on mute", "Stop texting your ex", "Even the moon is tired",
-        "Why are you awake?", "Go to sleep", "Overthinking hour",
-        "Error 404: Sleep not found", "Ghosting the world", "Midnight vibes", "Too late for coffee"
+        "Why are you awake?", "Bed ignoring me", "Overthinking hour",
+        "404: Sleep not found", "Ghosting the world", "Midnight vibes", "Too late for coffee"
     )
     in 5..8 -> listOf(
         "Fresh day loading", "Morning again", "Still sleepy",
         "Need more bed", "Snooze button won", "Who invented mornings?",
-        "Sun is too bright", "Starting engine...", "Barely awake", "Where's the caffeine?"
+        "Get this bread bro", "Starting engine...", "Barely awake", "Where's the caffeine?"
     )
     in 9..11 -> listOf(
-        "Brain online", "Productivity is good", "Coffee's working",
+        "Chasing bags bro", "Productivity is good", "Coffee's working",
         "Let's get it", "On the grind", "Actually focusing",
-        "Do not disturb", "Making things happen", "Fully charged", "Keyboard on fire"
+        "Do not disturb", "Making things happen", "Pretending to work", "Keyboard on fire"
     )
     in 12..13 -> listOf(
-        "Lunch is calling", "Need food", "Stomach in chat",
+        "Lunch is calling", "Where's food bro", "Stomach in chat",
         "Hangry mode off", "Time to eat", "Refueling...",
         "Menu scrolling", "Bite-sized break", "Brain needs carbs", "Out to lunch"
     )
@@ -111,13 +111,13 @@ private fun currentTimeStatusText() = when (LocalTime.now().hour) {
         "Almost golden hour", "Powering through", "Focus check", "Zone state active"
     )
     in 18..20 -> listOf(
-        "Day clocking out", "Evening in chat", "Almost done",
+        "Day clocking out", "Evening in chat", "Chill mode bro",
         "Wrapping things up", "Sunset state of mind", "Time to chill",
         "Task list cleared", "Closing tabs...", "Dinner loading", "Out of office"
     )
     else -> listOf(
         "Getting quiet", "Night mode", "Tomorrow can wait",
-        "Do nothing club", "Zero stress found", "Battery at 5%",
-        "Brain logging off", "Star gazing", "Cozy vibes only", "Peace and quiet"
+        "Do nothing club", "Zero stress found", "Battery at 1%",
+        "Brain logging off", "Star gazing", "Cozy vibes only", "Horizontal mode on"
     )
 }.random()

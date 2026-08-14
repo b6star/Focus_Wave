@@ -58,3 +58,55 @@ Example:
 ```bash
 git add -- . ':!app/src/main/res/drawable/bg_son_na_eun*.jpg'
 ```
+
+## Current Branch Handoff
+
+Current branch during the latest UI/AOD work:
+
+```text
+feature/app-ui-redesign
+```
+
+Current base at the time of this note:
+
+```text
+e60fffd Merge pull request #13 from b6star/feature/local-chat
+```
+
+Important current working-tree context:
+
+- `app/src/main/java/com/yourssu/focuswave/MainActivity.kt` has uncommitted AOD background rotation changes.
+- Timer and AOD backgrounds were intentionally split into separate state:
+  - `selectedTimerBackground`
+  - `selectedAodBackground`
+- `selectedBackground` is now a calculated value from `focusMode`, not its own saved state.
+- AOD background should keep the previously selected AOD image when switching from Timer mode to AOD mode.
+- AOD background should rotate only after the configured interval. The current default is 5 minutes.
+- Screen rotation should not immediately change the selected background.
+- Timer background is currently fixed to `R.drawable.bg_timer_milkyway`, but the structure intentionally uses `timerBackgroundsPath` so more Timer backgrounds can be added later.
+
+Current drawable state to review before committing:
+
+- Modified:
+  - `app/src/main/res/drawable/category_cafe.png`
+- Deleted:
+  - `app/src/main/res/drawable/grok_space_01.jpg`
+  - `app/src/main/res/drawable/grok_space_02.jpg`
+  - `app/src/main/res/drawable/grok_space_03.jpeg`
+  - `app/src/main/res/drawable/grok_space_04.jpeg`
+  - `app/src/main/res/drawable/space1_bg.jpg`
+- Untracked new backgrounds:
+  - `app/src/main/res/drawable/bg_aod_milkyway.png`
+  - `app/src/main/res/drawable/bg_aod_milyway2.png`
+  - `app/src/main/res/drawable/bg_aurora.jpg`
+  - `app/src/main/res/drawable/bg_timer_milkyway.png`
+- Still exclude unless explicitly requested:
+  - `app/src/main/res/drawable/bg_son_na_eun.jpg`
+  - `app/src/main/res/drawable/bg_son_na_eun2.jpg`
+
+Before continuing after Codex restart:
+
+1. Run `git status --short --branch`.
+2. Confirm whether the drawable deletions are intentional.
+3. Continue from `feature/app-ui-redesign`, not `feature/local-chat`.
+4. Re-run `./gradlew.bat assembleDebug` after any follow-up changes.
