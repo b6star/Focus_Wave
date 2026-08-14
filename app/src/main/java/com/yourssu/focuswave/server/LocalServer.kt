@@ -22,7 +22,7 @@ import com.yourssu.focuswave.server.model.SharedSourceIdentity
 import com.yourssu.focuswave.server.model.SharedSourceKind
 
 
-class LocalFileServer(
+class LocalServer(
     private val appFilesDirectory: File,
     port: Int = PORT,
     private val authCode: String,
