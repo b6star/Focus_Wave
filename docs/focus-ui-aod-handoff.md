@@ -42,3 +42,19 @@ Suggested priority:
 2. Bundled default AOD drawable fallback.
 
 Keep this separate from Timer mode background handling unless explicitly requested later.
+
+## Git Staging Note
+
+Do not include temporary bundled AOD background experiments in commits unless explicitly requested.
+
+Exclude these files when staging:
+
+```text
+app/src/main/res/drawable/bg_son_na_eun*.jpg
+```
+
+Example:
+
+```bash
+git add -- . ':!app/src/main/res/drawable/bg_son_na_eun*.jpg'
+```

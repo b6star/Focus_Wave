@@ -5,18 +5,13 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
-import java.io.IOException
-import java.io.InputStream
-import java.io.OutputStream
-import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
-import java.text.Normalizer
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.LinkedBlockingQueue
 import javax.crypto.SecretKey
 import com.yourssu.focuswave.server.data.TrustedDeviceEntity
+import com.yourssu.focuswave.server.model.ChatMessage
 import com.yourssu.focuswave.server.model.SharedFileOwner
 import com.yourssu.focuswave.server.model.SharedSourceIdentity
 import com.yourssu.focuswave.server.model.SharedSourceKind
@@ -29,6 +24,7 @@ class LocalServer(
     private val homePage: String? = null,
     private val secureRandom: SecureRandom = SecureRandom(),
     private val onFilesChanged: (() -> Unit)? = null,
+    private val onChatMessagesChanged: (() -> Unit)? = null,
     private val findTrustedDevice: ((
             trustedToken: String,
             ipAddress: String?,
@@ -48,6 +44,35 @@ class LocalServer(
     private val serverKeyPair = FileShareCrypto.generateServerKeyPair()
     private val clientAesKeys = ConcurrentHashMap<String, SecretKey>()  // key : token, value : aes key
     private val authAttempts = ConcurrentHashMap<String, AuthAttempt>()
+    private val fileShareRoutes = FileShareRoutes(
+        appFilesDirectory = appFilesDirectory,
+        secureRandom = secureRandom,
+        fileSaveLock = fileSaveLock,
+        fileOwners = fileOwners,
+        clientSessions = clientSessions,
+        clientAesKeys = clientAesKeys,
+        getRequestToken = ::getRequestToken,
+        unauthorizedResponse = ::unauthorizedResponse,
+        jsonError = ::jsonError,
+        jsonResponse = ::jsonResponse,
+        jsonString = ::jsonString,
+        getDeviceFriendlyName = ::getDeviceFriendlyName,
+        notifyFilesChanged = ::notifyFilesChanged,
+        logDebug = ::logDebug
+    )
+    private val chatRoutes = ChatRoutes(
+        secureRandom = secureRandom,
+        clientSessions = clientSessions,
+        clientAesKeys = clientAesKeys,
+        getRequestToken = ::getRequestToken,
+        unauthorizedResponse = ::unauthorizedResponse,
+        jsonError = ::jsonError,
+        jsonResponse = ::jsonResponse,
+        jsonString = ::jsonString,
+        getDeviceFriendlyName = ::getDeviceFriendlyName,
+        onMessagesChanged = ::notifyChatMessagesChanged,
+        logDebug = ::logDebug
+    )
 
     private data class AuthAttempt(
         var failCount: Int = 0,
@@ -65,6 +90,7 @@ class LocalServer(
     @RequiresApi(Build.VERSION_CODES.TIRAMISU)
     override fun serve(session: IHTTPSession): Response {
         return when {
+            // 웹 브라우저에 로컬 파일 공유/채팅 홈 화면을 내려준다.
             session.uri == "/" && session.method == Method.GET -> newFixedLengthResponse(
                 Response.Status.OK,
                 "text/html; charset=utf-8",
@@ -73,69 +99,103 @@ class LocalServer(
                 addNoStoreHeaders()
             }
 
+            // 브라우저가 서버 연결 상태를 확인할 때 사용한다.
             session.uri == "/ping" && session.method == Method.GET -> jsonResponse(
                 Response.Status.OK,
                 """{"success":true}"""
             )
 
+            // 인증 코드로 새 세션 토큰을 발급한다.
             session.uri == "/auth" && session.method == Method.POST -> handleAuth(session)
 
+            // 현재 클라이언트가 다운로드할 수 있는 공유 파일 목록을 조회한다.
             session.uri == "/list" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
-                session.method == Method.GET -> handleList(session)
+                session.method == Method.GET -> fileShareRoutes.handleList(session)
                 else -> methodNotAllowedResponse()
             }
 
+            // PC 브라우저에서 보낸 암호화 파일을 서버 저장소에 업로드한다.
             session.uri == "/upload" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
-                session.method == Method.POST -> handleUpload(session)
+                session.method == Method.POST -> fileShareRoutes.handleUpload(session)
                 else -> methodNotAllowedResponse()
             }
 
-            session.uri.startsWith(DOWNLOAD_ROUTE_PREFIX) -> when {
+            // 서버 저장소의 파일을 암호화 스트림으로 다운로드한다.
+            session.uri.startsWith(FileShareRoutes.DOWNLOAD_ROUTE_PREFIX) -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
-                session.method == Method.GET -> handleDownload(session)
+                session.method == Method.GET -> fileShareRoutes.handleDownload(session)
                 else -> methodNotAllowedResponse()
             }
 
-            session.uri.startsWith(PREVIEW_ROUTE_PREFIX) -> when {
+            // 서버 저장소의 파일을 미리보기용 암호화 스트림으로 내려준다.
+            session.uri.startsWith(FileShareRoutes.PREVIEW_ROUTE_PREFIX) -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
-                session.method == Method.GET -> handlePreview(session)
+                session.method == Method.GET -> fileShareRoutes.handlePreview(session)
                 else -> methodNotAllowedResponse()
             }
 
+            // 존재하는 경로지만 허용되지 않은 HTTP method 요청을 차단한다.
             session.uri == "/auth" || session.uri == "/ping" || session.uri == "/" ->
                 methodNotAllowedResponse()
 
+            // 채팅방에 저장된 최근 메시지 목록을 암호화해서 조회한다.
+            session.uri == "/chat/messages" -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.GET -> chatRoutes.handleMessages(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            // 클라이언트가 보낸 암호화 채팅 메시지를 복호화해 저장하고 broadcast한다.
+            session.uri == "/chat/send" -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.POST -> chatRoutes.handleSend(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            // 새 채팅 메시지를 실시간으로 받기 위한 SSE 연결을 연다.
+            session.uri == "/chat/events" -> when {
+                !isAuthenticated(session) -> unauthorizedResponse()
+                session.method == Method.GET -> chatRoutes.handleEvents(session)
+                else -> methodNotAllowedResponse()
+            }
+
+            // X25519 키 교환을 수행하고 클라이언트별 AES 키를 만든다.
             session.uri == "/crypto/exchange" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
                 session.method == Method.POST -> handleCryptoExchange(session)
                 else -> methodNotAllowedResponse()
             }
 
+            // 신뢰 기기 승인 결과를 브라우저에 실시간으로 전달하는 SSE 연결을 연다.
             session.uri == "/trusted-device/events" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
                 session.method == Method.GET -> handleTrustedDeviceEvents(session)
                 else -> methodNotAllowedResponse()
             }
 
+            // 승인된 신뢰 기기 토큰을 브라우저 쿠키로 저장한다.
             session.uri == "/trusted-device/claim" -> when {
                 !isAuthenticated(session) -> unauthorizedResponse()
                 session.method == Method.POST -> handleTrustedDeviceClaim(session)
                 else -> methodNotAllowedResponse()
             }
 
+            // 저장된 신뢰 기기 토큰으로 인증 코드 없이 세션을 발급한다.
             session.uri == "/auth/trusted" -> when {
                 session.method == Method.POST -> handleTrustedAuth(session)
                 else -> methodNotAllowedResponse()
             }
 
+            // 알 수 없는 non-GET 요청은 method not allowed로 처리한다.
             session.method != Method.GET -> newFixedLengthResponse(
                 Response.Status.METHOD_NOT_ALLOWED,
                 MIME_PLAINTEXT,
                 "Method not allowed"
             )
 
+            // 어떤 라우트에도 매칭되지 않은 GET 요청은 not found로 처리한다.
             else -> newFixedLengthResponse(
                 Response.Status.NOT_FOUND,
                 MIME_PLAINTEXT,
@@ -501,464 +561,18 @@ class LocalServer(
         "Method not allowed"
     )
 
-    private fun handleList(session: IHTTPSession): Response = try {
-        val requestSource = getRequestSource(session)
-
-        val files = listSharedFiles()
-            .filter { file ->
-                val owner = fileOwners[file.name]
-                !isSameSource(owner?.source, requestSource)
-                        && !file.name.endsWith(".tmp")
-            }
-
-        logDebug("file list requested: count=${files.size}")
-        jsonResponse(
-            Response.Status.OK,
-            files.joinToString(prefix = "[", postfix = "]") { file -> jsonString(file.name) }
-        )
-    } catch (error: IOException) {
-        logDebug("file list failed: ${error.message}")
-        jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file list")
-    }
-
-    private fun getRequestSource(session: IHTTPSession): SharedSourceIdentity? {
-        val token = getRequestToken(session) ?: return null
-        return clientSessions[token]
-    }
-
-    private fun isSameSource(
-        first: SharedSourceIdentity?,
-        second: SharedSourceIdentity?
-    ): Boolean {
-        if (first == null || second == null) return false
-        if (first.trustedDeviceId != null && second.trustedDeviceId != null) {
-            return first.trustedDeviceId == second.trustedDeviceId
-        }
-        if (first.sessionToken != null && second.sessionToken != null) {
-            return first.sessionToken == second.sessionToken
-        }
-        return false
-    }
-
-    private fun handleDownload(session: IHTTPSession): Response =
-        handleFileResponse(session, DOWNLOAD_ROUTE_PREFIX, "download")
-
-    private fun handlePreview(session: IHTTPSession): Response =
-        handleFileResponse(session, PREVIEW_ROUTE_PREFIX, "preview")
-
-    private fun handleFileResponse(
-        session: IHTTPSession,
-        routePrefix: String,
-        action: String
-    ): Response {
-        val encryptedFileNameBase64 = session.uri.removePrefix(routePrefix)
-        val metaNonceBase64 = session.parameters["nonce"]?.firstOrNull()
-        if (encryptedFileNameBase64.isEmpty() || metaNonceBase64.isNullOrEmpty()) {
-            return jsonError(Response.Status.BAD_REQUEST, "Missing cryptographic parameters for File Name")
-        }
-
-        val token =
-            getRequestToken(session)
-                ?: return unauthorizedResponse()
-        val aesKey =
-            clientAesKeys[token]
-                ?: return jsonError(Response.Status.UNAUTHORIZED, "Encryption key is missing")
-
-        val actualFileName = decryptRequestedFileName(
-            encryptedFileNameBase64 = encryptedFileNameBase64,
-            metaNonceBase64 = metaNonceBase64,
-            aesKey = aesKey
-        ) ?: return jsonError(Response.Status.BAD_REQUEST, "Invalid encrypted file name")
-
-        val safeName = sanitizeFileName(actualFileName)
-        if (safeName == null || safeName != actualFileName) {
-            return jsonError(Response.Status.BAD_REQUEST, "Invalid file name")
-        }
-
-        return try {
-            val file = resolveSharedFile(safeName)
-                ?: return jsonError(Response.Status.NOT_FOUND, "File not found")
-            createEncryptedFileResponse(
-                file = file,
-                aesKey = aesKey,
-                action = action
-            )
-        } catch (error: IOException) {
-            logDebug("$action failed: name=$safeName, reason=${error.message}")
-            jsonError(Response.Status.INTERNAL_ERROR, "Failed to read file")
-        }
-    }
-
-    private fun decryptRequestedFileName(
-        encryptedFileNameBase64: String,
-        metaNonceBase64: String,
-        aesKey: SecretKey
-    ): String? = runCatching {
-        FileShareCrypto.decryptAesCbcString(
-            encryptedFileNameBase64,
-            Base64.getDecoder().decode(metaNonceBase64),
-            aesKey
-        )
-    }.getOrNull()
-
-    private fun resolveSharedFile(safeName: String): File? {
-        val directory = sharedDirectory(appFilesDirectory)
-        val file = File(directory, safeName)
-        return file.takeIf {
-            it.canonicalFile.parentFile == directory.canonicalFile && it.isFile
-        }
-    }
-
-    private fun createEncryptedFileResponse(
-        file: File,
-        aesKey: SecretKey,
-        action: String
-    ): Response {
-        val dummyMimeType = "application/octet-stream"
-
-        val metaNonceBytes = ByteArray(16)
-        secureRandom.nextBytes(metaNonceBytes)
-        val encryptedFileNameBase64 =
-            FileShareCrypto.encryptAesCbcStringWith256Padding(file.name, metaNonceBytes, aesKey)
-        val metaNonceBase64 = Base64.getEncoder().encodeToString(metaNonceBytes)
-
-        val nonceBytes = ByteArray(16)
-        secureRandom.nextBytes(nonceBytes)
-        val expectedEncryptedSize = (file.length() + 16) / 16 * 16
-
-        return object : Response(
-            Response.Status.OK,
-            dummyMimeType,
-            null,  // 실시간 스트리밍을 위해 send를 override
-            expectedEncryptedSize
-        ) {
-            override fun send(outputStream: OutputStream) {
-                try {
-                    outputStream.write(
-                        buildString {
-                            append("HTTP/1.1 ${Response.Status.OK.description}\r\n")
-                            append("Content-Type: $dummyMimeType\r\n")
-                            append("Content-Length: $expectedEncryptedSize\r\n")
-                            append("Content-Disposition: attachment; filename=\"encrypted_data.bin\"\r\n")
-                            append("X-FocusWave-Encrypted: true\r\n")
-                            append("X-FocusWave-Nonce: ${Base64.getEncoder().encodeToString(nonceBytes)}\r\n")
-                            append("X-File-Name-Encrypted: $encryptedFileNameBase64\r\n")
-                            append("X-Meta-Nonce: $metaNonceBase64\r\n")
-                            append("\r\n")
-                        }.toByteArray(StandardCharsets.UTF_8)
-                    )
-
-                    file.inputStream().use { plainInput ->
-                        FileShareCrypto.encryptAesCbcStream(
-                            plainInputStream = plainInput,
-                            encryptedOutputStream = outputStream,
-                            nonceBytes = nonceBytes,
-                            aesKey = aesKey
-                        )
-                    }
-                } catch (error: IOException) {
-                    logDebug("$action response failed: ${error.message}")
-                }
-            }
-        }
-    }
-
-    private fun handleUpload(session: IHTTPSession): Response {
-        logDebug("upload request received (On-the-fly 실시간 스트림 모드)")
-        val encryptedFileNameBase64 = session.headers["x-file-name-encrypted"]
-        val metadataNonceBase64 = session.headers["x-meta-nonce"]
-        val fileNonceBase64 = session.headers["x-focuswave-nonce"]
-
-        // ?? PC가 보내는 원본 파일의 정확한 바이트 크기를 가져옵니다.
-        val contentLength = session.headers["content-length"]?.toLongOrNull()
-
-
-        if (
-            fileNonceBase64.isNullOrBlank() ||
-            encryptedFileNameBase64.isNullOrBlank() ||
-            metadataNonceBase64.isNullOrBlank()
-            ) {
-            return uploadError(Response.Status.BAD_REQUEST, "필수 헤더가 누락되었습니다.")
-        }
-
-        if (contentLength == null || contentLength <= 0) {
-            return uploadError(Response.Status.BAD_REQUEST, "Content-Length를 알 수 없습니다.")
-        }
-
-
-        val token = getRequestToken(session) ?: return unauthorizedResponse()
-        val aesKey = clientAesKeys[token] ?: return uploadError(Response.Status.UNAUTHORIZED, "암호화 키가 없습니다.")
-
-        val rawFileName = try{
-            val metaNonceBytes = Base64.getDecoder().decode(metadataNonceBase64)
-
-            FileShareCrypto.decryptAesCbcString(
-                encryptedFileNameBase64,
-                metaNonceBytes,
-                aesKey
-            )
-        } catch (error: Exception) {
-            logDebug("파일명 복호화 실패: ${error.message}")
-            return uploadError(Response.Status.BAD_REQUEST, "파일명 복호화에 실패했습니다.")
-        }
-
-        val safeFileName = sanitizeFileName(rawFileName)
-            ?: return uploadError(Response.Status.BAD_REQUEST, "파일명이 비어있습니다.")
-
-        val fileNonceBytes = try {
-            Base64.getDecoder().decode(fileNonceBase64)
-        } catch (_: Exception) {
-            return uploadError(Response.Status.BAD_REQUEST, "올바르지 않은 nonce 형식입니다.")
-        }
-
-        return try {
-            // contentLength 크기만큼만 읽고 종료하는 스트림
-            val boundedStream = BoundedInputStream(session.inputStream, contentLength)
-
-            val token =
-                getRequestToken(session)
-                    ?: return unauthorizedResponse()
-
-            val storedFile = saveUploadedFileStream(
-                networkInputStream = boundedStream, // 안전하게 씌워진 스트림을 넘김
-                safeFileName = safeFileName,
-                nonceBytes = fileNonceBytes,
-                aesKey = aesKey
-            )
-
-            val source = clientSessions[token] ?: SharedSourceIdentity(
-                kind = SharedSourceKind.UNKNOWN,
-                sessionToken = token,
-                trustedDeviceId = null,
-                displayName = getDeviceFriendlyName(session.headers["user-agent"]),
-                ipAddress = session.remoteIpAddress,
-                userAgent = session.headers["user-agent"]
-            )
-
-            fileOwners[storedFile.name] = SharedFileOwner(
-                source = source,
-                receivedAtMillis = System.currentTimeMillis()
-            )
-
-            logDebug("upload saved on-the-fly: path=${storedFile.absolutePath}, size=${storedFile.length()}")
-            notifyFilesChanged()
-
-
-            jsonResponse(
-                Response.Status.OK,
-                """{"success":true,"fileName":${jsonString(storedFile.name)},"size":${storedFile.length()}}"""
-            )
-        } catch (error: Exception) {
-            logDebug("upload save failed: reason=${error.message}")
-            uploadError(
-                Response.Status.INTERNAL_ERROR,
-                "파일 저장 실패: ${error.message}"
-            )
-        }
-    }
-
-    private fun saveUploadedFileStream(
-        networkInputStream: InputStream,
-        safeFileName: String,
-        nonceBytes: ByteArray,
-        aesKey: SecretKey
-    ): File = synchronized(fileSaveLock) {
-        val directory = getOrCreateSharedDirectory()
-        val destination = resolveUniqueFile(directory, safeFileName)
-
-        if (destination.canonicalFile.parentFile != directory.canonicalFile) {
-            throw IOException("Invalid file path")
-        }
-
-        // 쓰기가 완전히 끝나기 전까지 UI 리스트에 노출되어 깨지는 것을 막기 위해 여전히 .tmp 확장자를 씁니다.
-        val tempDestination = File(directory, "${destination.name}.tmp")
-
-        try {
-            //  256KB 대용량 버퍼를 네트워크 스트림과 디스크 출력 스트림 양쪽에 씌웁니다.
-            networkInputStream.buffered(256 * 1024).use { bufferedNetworkInput ->
-                tempDestination.outputStream().buffered(256 * 1024).use { decryptedOutput ->
-
-                    // ?? 임시 파일 경유 없이, 와이파이 스트림을 받자마자 바로 복호화해서 디스크에 때려 박습니다.
-                    FileShareCrypto.decryptAesCbcStream(
-                        encryptedInputStream = bufferedNetworkInput,
-                        decryptedOutputStream = decryptedOutput,
-                        nonceBytes = nonceBytes,
-                        aesKey = aesKey
-                    )
-                }
-            } // 이 블록을 빠져나오는 순간 네트워크 소켓과 파일이 완벽히 close() 됩니다.
-
-            if (!tempDestination.isFile) {
-                throw IOException("Stored file verification failed")
-            }
-
-            //  디스크에 실시간 복호화 쓰기가 끝나자마자 원본 이름으로 교체
-            if (!tempDestination.renameTo(destination)) {
-                throw IOException("Failed to rename temp file to final destination")
-            }
-
-            destination
-        } catch (error: Exception) {
-            tempDestination.delete()
-            destination.delete()
-            throw IOException("실시간 스트림 복호화 실패: ${error.message}", error)
-        }
-    }
-
-    internal fun listSharedFiles(): List<File> {
-        val directory = sharedDirectory(appFilesDirectory)
-        if (!directory.exists()) return emptyList()
-        if (!directory.isDirectory) {
-            throw IOException("Shared storage path is not a directory")
-        }
-        return directory.listFiles()
-            ?.asSequence()
-            ?.filter { it.isFile }
-            ?.sortedBy { it.name.lowercase() }
-            ?.toList()
-            ?: throw IOException("Failed to read shared storage directory")
-    }
-
-    private fun getOrCreateSharedDirectory(): File {
-        val directory = sharedDirectory(appFilesDirectory)
-        if (directory.exists()) {
-            if (!directory.isDirectory) {
-                throw IOException("Shared storage path is not a directory")
-            }
-        } else if (!directory.mkdirs() && !directory.isDirectory) {
-            throw IOException("Failed to create shared storage directory")
-        }
-        return directory
-    }
-
-    private fun sanitizeFileName(rawFileName: String): String? {
-        val leafName = rawFileName
-            .replace('\\', '/')
-            .substringAfterLast('/')
-
-        val normalizedName = Normalizer.normalize(leafName, Normalizer.Form.NFC)
-
-        val cleanedName = normalizedName
-            .replace(CONTROL_CHARACTERS, "")
-            .replace(UNSAFE_FILE_NAME_CHARACTERS, "_")
-            .trim()
-            .trim('.')
-
-        if (cleanedName.isBlank()) return null
-
-        val dotIndex = cleanedName.lastIndexOf('.')
-
-        val extension = if (dotIndex > 0) {
-            cleanedName.substring(dotIndex)
-        } else {
-            ""
-        }
-
-        val baseName = if (dotIndex > 0) {
-            cleanedName.substring(0, dotIndex)
-        } else {
-            cleanedName
-        }
-
-        val maxBaseLength = (MAX_FILE_NAME_CHARACTERS - extension.length)
-            .coerceAtLeast(1)
-
-        val safeBaseName = baseName
-            .take(maxBaseLength)
-            .trimEnd()
-            .trimEnd { Character.isHighSurrogate(it) }
-
-        return (safeBaseName + extension).ifBlank { null }
-    }
-
-    private fun resolveUniqueFile(directory: File, safeFileName: String): File {
-        val initialFile = File(directory, safeFileName)
-        if (!initialFile.exists()) return initialFile
-
-        val dotIndex = safeFileName.lastIndexOf('.')
-        val extension = if (dotIndex > 0) safeFileName.substring(dotIndex) else ""
-        val baseName = if (dotIndex > 0) safeFileName.substring(0, dotIndex) else safeFileName
-
-        var suffixNumber = 1
-        while (true) {
-            val suffix = " ($suffixNumber)"
-            val shortenedBase = baseName
-                .take((MAX_FILE_NAME_CHARACTERS - extension.length - suffix.length).coerceAtLeast(1))
-                .trimEnd { Character.isHighSurrogate(it) }
-            val candidate = File(directory, shortenedBase + suffix + extension)
-            if (!candidate.exists()) return candidate
-            suffixNumber++
-        }
-    }
-
-
-
-    private fun saveUploadedFile(temporaryFile: File, safeFileName: String): File =
-        synchronized(fileSaveLock) {
-            val directory = getOrCreateSharedDirectory()
-            val destination = resolveUniqueFile(directory, safeFileName)
-
-            if (destination.canonicalFile.parentFile != directory.canonicalFile) {
-                throw IOException("Invalid file path")
-            }
-
-            try {
-                temporaryFile.inputStream().use { input ->
-                    destination.outputStream().use { output ->
-                        input.copyTo(output, bufferSize = 1024 * 1024)
-                        output.flush()
-                    }
-                }
-                if (!destination.isFile || destination.length() != temporaryFile.length()) {
-                    throw IOException("Stored file verification failed")
-                }
-                destination
-            } catch (error: IOException) {
-                destination.delete()
-                throw error
-            }
-        }
-
-    private fun saveUploadedFileBytes(
-        fileBytes: ByteArray,
-        safeFileName: String
-    ): File =
-        synchronized(fileSaveLock) {
-            val directory = getOrCreateSharedDirectory()
-            val destination = resolveUniqueFile(directory, safeFileName)
-
-            if (destination.canonicalFile.parentFile != directory.canonicalFile) {
-                throw IOException("Invalid file path")
-            }
-
-            try {
-                destination.outputStream().use { output ->
-                    output.write(fileBytes)
-                    output.flush()
-                }
-
-                if (!destination.isFile || destination.length() != fileBytes.size.toLong()) {
-                    throw IOException("Stored file verification failed")
-                }
-
-                destination
-            } catch (error: IOException) {
-                destination.delete()
-                throw error
-            }
-        }
-
-
     fun grantTrustedDevice(sessionToken: String, trustedToken: String) {
         logDebug("trusted grant issued: sessionToken=$sessionToken")
         pendingTrustedTokenGrants[sessionToken] = trustedToken
         notifyTrustedDeviceApproved(sessionToken)
     }
 
-    private fun uploadError(status: Response.Status, message: String): Response {
-        logDebug("upload failed: $message")
-        return jsonError(status, message)
+    fun postHostChatMessage(message: String) {
+        chatRoutes.postHostMessage(message)
     }
+
+    fun getChatMessages(): List<ChatMessage> =
+        chatRoutes.listMessages()
 
     private fun jsonError(status: Response.Status, message: String): Response =
         jsonResponse(status, """{"success":false,"message":${jsonString(message)}}""")
@@ -1002,6 +616,14 @@ class LocalServer(
         }
     }
 
+    private fun notifyChatMessagesChanged() {
+        try {
+            onChatMessagesChanged?.invoke()
+        } catch (error: RuntimeException) {
+            logDebug("chat message notification failed: ${error.message}")
+        }
+    }
+
     private fun logDebug(message: String) {
         try {
             Log.d(LOG_TAG, message)
@@ -1024,26 +646,17 @@ class LocalServer(
         const val PORT = 8080
 
         private const val LOG_TAG = "FileShare"
-        private const val DOWNLOAD_ROUTE_PREFIX = "/download/"
-        private const val PREVIEW_ROUTE_PREFIX = "/preview/"
-        private val UPLOAD_FIELD_NAMES = listOf("file", "files")
         internal const val SHARED_DIRECTORY_NAME = "shared_files"
 
         internal fun sharedDirectory(appFilesDirectory: File): File =
             File(appFilesDirectory, SHARED_DIRECTORY_NAME)
 
 
-        private const val MAX_FILE_SIZE_BYTES = 5000L * 1024 * 1024  //최대 5GB
-        private const val MAX_MULTIPART_OVERHEAD_BYTES = 1024L * 1024
-        private const val MAX_REQUEST_SIZE_BYTES = MAX_FILE_SIZE_BYTES + MAX_MULTIPART_OVERHEAD_BYTES
-        private const val MAX_FILE_NAME_CHARACTERS = 60
         private const val TOKEN_BYTE_LENGTH = 32
         private const val TOKEN_HEADER_NAME = "x-focuswave-token"
         private const val TOKEN_COOKIE_NAME = "FocusWave-Token"
         private const val BEARER_PREFIX = "Bearer "
         private val AUTH_CODE_PATTERN = Regex(""""code"\s*:\s*"(\d{6})"""")
-        private val CONTROL_CHARACTERS = Regex("[\\u0000-\\u001F\\u007F]")
-        private val UNSAFE_FILE_NAME_CHARACTERS = Regex("""[/:*?"<>|]""")
         private val CLIENT_PUBLIC_KEY_PATTERN = Regex(""""clientPublicKey"\s*:\s*"([^"]+)"""")
         private const val TRUSTED_DEVICE_COOKIE_NAME = "FocusWave-TrustedDevice"
         private val FALLBACK_HOME_PAGE = """
@@ -1095,122 +708,3 @@ class LocalServer(
 }
 
 
-private class SseResponse(
-    private val stream: SseEventStream
-) : NanoHTTPD.Response(
-    NanoHTTPD.Response.Status.OK,
-    "text/event-stream; charset=utf-8",
-    null,
-    -1
-) {
-    override fun send(outputStream: OutputStream) {
-        try {
-            outputStream.write(
-                (
-                    "HTTP/1.1 ${NanoHTTPD.Response.Status.OK.description} \r\n" +
-                        "Content-Type: text/event-stream; charset=utf-8\r\n" +
-                        "Cache-Control: no-cache, no-transform\r\n" +
-                        "Connection: keep-alive\r\n" +
-                        "Transfer-Encoding: chunked\r\n" +
-                        "X-Accel-Buffering: no\r\n" +
-                        "\r\n"
-                    ).toByteArray(StandardCharsets.UTF_8)
-            )
-            outputStream.flush()
-
-            while (true) {
-                val chunk = stream.takeChunk()
-                outputStream.write(Integer.toHexString(chunk.size).toByteArray(StandardCharsets.US_ASCII))
-                outputStream.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
-                outputStream.write(chunk)
-                outputStream.write("\r\n".toByteArray(StandardCharsets.US_ASCII))
-                outputStream.flush()
-            }
-        } catch (_: IOException) {
-            stream.close()
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            stream.close()
-        }
-    }
-}
-
-
-private class SseEventStream : InputStream() {
-    private val chunks = LinkedBlockingQueue<ByteArray>()
-    private var currentChunk = ByteArray(0)
-    private var currentIndex = 0
-
-    fun sendComment(comment: String) {
-        enqueue(": $comment\n\n")
-    }
-
-    fun sendEvent(event: String, data: String) {
-        enqueue("event: $event\ndata: $data\n\n")
-    }
-
-    fun sendMessage(data: String) {
-        enqueue("data: $data\n\n")
-    }
-
-    @Throws(InterruptedException::class)
-    fun takeChunk(): ByteArray = chunks.take()
-
-    override fun read(): Int {
-        while (currentIndex >= currentChunk.size) {
-            currentChunk = chunks.take()
-            currentIndex = 0
-        }
-
-        return currentChunk[currentIndex++].toInt() and 0xff
-    }
-
-    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        if (length == 0) return 0
-
-        val firstByte = read()
-        if (firstByte < 0) return -1
-
-        buffer[offset] = firstByte.toByte()
-        var copied = 1
-
-        while (copied < length && currentIndex < currentChunk.size) {
-            buffer[offset + copied] = currentChunk[currentIndex++]
-            copied++
-        }
-
-        return copied
-    }
-
-    private fun enqueue(payload: String) {
-        chunks.offer(payload.toByteArray(Charsets.UTF_8))
-    }
-}
-
-
-//  무한 대기(Deadlock) 방지용: 지정된 크기만큼만 데이터를 읽고 끊어버리는 스트림
-private class BoundedInputStream(
-    private val inStream: java.io.InputStream,
-    private val limit: Long
-) : java.io.InputStream() {
-    private var left: Long = limit
-
-    override fun read(): Int {
-        if (left <= 0) return -1
-        val result = inStream.read()
-        if (result != -1) left--
-        return result
-    }
-
-    override fun read(b: ByteArray, off: Int, len: Int): Int {
-        if (left <= 0) return -1
-        val bytesToRead = minOf(len.toLong(), left).toInt()
-        val result = inStream.read(b, off, bytesToRead)
-        if (result != -1) left -= result
-        return result
-    }
-
-    override fun close() {
-        // inStream.close()
-    }
-}

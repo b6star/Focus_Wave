@@ -299,7 +299,7 @@ private fun FocusScreen(
         if (focusMode == MainActivity.TIMER_MODE) {
             FocusScene(bgImagePath = R.drawable.grok_space_03)
         } else {
-            FocusScene(bgImagePath = R.drawable.grok_space_04, overlayDarkness = 0.5f)
+            FocusScene(bgImagePath = R.drawable.bg_son_na_eun, overlayDarkness = 0.5f)
         }
         Scaffold(
             modifier = Modifier.fillMaxSize(),

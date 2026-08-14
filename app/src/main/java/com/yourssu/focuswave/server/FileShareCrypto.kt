@@ -99,6 +99,28 @@ object FileShareCrypto {
         return String(decryptedBytes, 0, actualLength, Charsets.UTF_8)
     }
 
+    fun encryptAesCbcText(
+        plainText: String,
+        nonceBytes: ByteArray,
+        aesKey: SecretKey
+    ): String {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
+        cipher.init(Cipher.ENCRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
+        val encryptedBytes = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
+        return Base64.getEncoder().encodeToString(encryptedBytes)
+    }
+
+    fun decryptAesCbcText(
+        encryptedBase64: String,
+        nonceBytes: ByteArray,
+        aesKey: SecretKey
+    ): String {
+        val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
+        cipher.init(Cipher.DECRYPT_MODE, aesKey, IvParameterSpec(nonceBytes))
+        val decryptedBytes = cipher.doFinal(Base64.getDecoder().decode(encryptedBase64))
+        return String(decryptedBytes, Charsets.UTF_8)
+    }
+
     fun encryptAesCbcStream(
         plainInputStream: InputStream,
         encryptedOutputStream: OutputStream,

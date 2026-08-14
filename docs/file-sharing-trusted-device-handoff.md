@@ -365,3 +365,40 @@ Persistence note:
 - The project does not yet have persistence for selected sound options.
 - Later, store the selected `SoundOptionId` per `SoundCategoryId` with DataStore or another lightweight preference store.
 - On app start, load saved selections; if missing, use each category's built-in default option.
+
+## Low Priority Backlog: Chat Code Highlighting
+
+Later, consider adding syntax highlighting for code blocks in local chat messages.
+
+Target behavior:
+
+- Plain chat messages should keep the current simple bubble UI.
+- Only fenced code blocks should be highlighted, for example:
+
+````text
+```kotlin
+private const val MAX_MESSAGES = 300
+
+private fun sendMessage() {}
+```
+````
+
+- Kotlin code should visually distinguish keywords such as `private`, `const`, `val`, and `fun`.
+- Function names should use a separate accent color.
+- This is low priority. Do not block chat, file sharing, trusted-device work, or AOD work on this.
+
+Possible implementation options:
+
+- Lightweight local implementation:
+  - Add `app/src/main/java/com/yourssu/focuswave/ui/chat/CodeHighlighter.kt`.
+  - Convert Kotlin code blocks into `AnnotatedString`.
+  - Render code with `FontFamily.Monospace` in `ChatScreen.kt`.
+- Library-based implementation:
+  - Search for `Jetpack Compose syntax highlighting`, `Compose Markdown syntax highlighting`, or `Kotlin Compose syntax highlighter`.
+  - Markdown-based rendering is probably the best fit if chat messages support fenced code blocks.
+
+Relevant files:
+
+- `app/src/main/java/com/yourssu/focuswave/ui/chat/ChatScreen.kt`
+- `app/src/main/java/com/yourssu/focuswave/ui/state/ChatUiState.kt`
+- `app/src/assets/index.html`

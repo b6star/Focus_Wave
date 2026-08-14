@@ -22,6 +22,8 @@ import com.yourssu.focuswave.server.model.SharedSourceIdentity
 import com.yourssu.focuswave.server.model.SharedSourceKind
 import com.yourssu.focuswave.server.model.SharedSourceUi
 import com.yourssu.focuswave.ui.fileshare.SharedFileUi
+import com.yourssu.focuswave.ui.state.ChatMessageUi
+import com.yourssu.focuswave.ui.state.ChatUiState
 import com.yourssu.focuswave.ui.state.FileShareUiState
 import com.yourssu.focuswave.ui.state.TrustedDeviceUiState
 import kotlinx.coroutines.flow.update
@@ -38,6 +40,8 @@ class FileServerManager(application: Application) : AndroidViewModel(application
 
     private val _uiState = MutableStateFlow(FileShareUiState())
     val uiState: StateFlow<FileShareUiState> = _uiState.asStateFlow()
+    private val _chatUiState = MutableStateFlow(ChatUiState())
+    val chatUiState: StateFlow<ChatUiState> = _chatUiState.asStateFlow()
     private val trustedDeviceRepository =
         TrustedDeviceRepository.getInstance(application)
     private val _trustedDeviceUiState = MutableStateFlow(TrustedDeviceUiState())
@@ -56,6 +60,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             authCode = authCode,
             homePage = loadHomePage(),
             onFilesChanged = ::onSharedFilesChanged,
+            onChatMessagesChanged = ::onChatMessagesChanged,
             findTrustedDevice = { trustedToken, ipAddress, userAgent ->
                 kotlinx.coroutines.runBlocking {
                     trustedDeviceRepository.findTrustedDeviceByToken(
@@ -130,6 +135,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         server = null
         clearFileShareRecords()
         _uiState.value = FileShareUiState()
+        _chatUiState.value = ChatUiState()
     }
 
 
@@ -375,6 +381,30 @@ class FileServerManager(application: Application) : AndroidViewModel(application
                 input.copyTo(output)
             }
         }
+    }
+
+    fun sendChatMessage(message: String) {
+        server?.postHostChatMessage(message)
+    }
+
+    private fun onChatMessagesChanged() {
+        val messages = server
+            ?.getChatMessages()
+            ?.map { message ->
+                ChatMessageUi(
+                    id = message.id,
+                    sequence = message.sequence,
+                    senderName = message.senderName,
+                    senderIpAddress = message.senderIpAddress,
+                    senderUserAgent = message.senderUserAgent,
+                    text = message.plainText,
+                    sentAtMillis = message.sentAtMillis,
+                    isMine = message.senderId == ChatRoutes.HOST_SENDER_ID
+                )
+            }
+            .orEmpty()
+
+        _chatUiState.value = ChatUiState(messages = messages)
     }
 
     private fun onUntrustedClientAuthenticated(source: SharedSourceIdentity) {
