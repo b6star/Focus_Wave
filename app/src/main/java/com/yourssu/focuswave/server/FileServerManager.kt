@@ -25,6 +25,7 @@ import com.yourssu.focuswave.ui.fileshare.SharedFileUi
 import com.yourssu.focuswave.ui.state.ChatMessageUi
 import com.yourssu.focuswave.ui.state.ChatUiState
 import com.yourssu.focuswave.ui.state.FileShareUiState
+import com.yourssu.focuswave.ui.state.ServerUiState
 import com.yourssu.focuswave.ui.state.TrustedDeviceUiState
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -38,8 +39,10 @@ class FileServerManager(application: Application) : AndroidViewModel(application
     private var server: LocalServer? = null
     private val secureRandom = SecureRandom()
 
-    private val _uiState = MutableStateFlow(FileShareUiState())
-    val uiState: StateFlow<FileShareUiState> = _uiState.asStateFlow()
+    private val _serverUiState = MutableStateFlow(ServerUiState())
+    val serverUiState: StateFlow<ServerUiState> = _serverUiState.asStateFlow()
+    private val _fileShareUiState = MutableStateFlow(FileShareUiState())
+    val fileShareUiState: StateFlow<FileShareUiState> = _fileShareUiState.asStateFlow()
     private val _chatUiState = MutableStateFlow(ChatUiState())
     val chatUiState: StateFlow<ChatUiState> = _chatUiState.asStateFlow()
     private val trustedDeviceRepository =
@@ -80,7 +83,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
 
             val serverAddress = findWifiServerAddress()
 
-            _uiState.value = FileShareUiState(
+            _serverUiState.value = ServerUiState(
                 isRunning = true,
                 serverAddress = serverAddress,
                 authCode = authCode,
@@ -90,12 +93,14 @@ class FileServerManager(application: Application) : AndroidViewModel(application
                 } else {
                     "PC 브라우저에서 아래 주소로 접속하세요."
                 },
-                uploadedFiles = getUploadedFiles()
+                isConnectionInfoExpanded = _serverUiState.value.isConnectionInfoExpanded
             )
+            _fileShareUiState.value = FileShareUiState(uploadedFiles = getUploadedFiles())
         } catch (error: Exception) {
             newServer.stop()
-            _uiState.value = FileShareUiState(
-                errorMessage = error.localizedMessage ?: "서버를 시작하지 못했습니다."
+            _serverUiState.value = ServerUiState(
+                errorMessage = error.localizedMessage ?: "서버를 시작하지 못했습니다.",
+                isConnectionInfoExpanded = _serverUiState.value.isConnectionInfoExpanded
             )
         }
     }
@@ -120,7 +125,7 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             }
     }
     private fun onSharedFilesChanged() {
-        _uiState.update { state ->
+        _fileShareUiState.update { state ->
             state.copy(
                 filesRevision = state.filesRevision + 1L,
                 uploadedFiles = getUploadedFiles()
@@ -134,7 +139,10 @@ class FileServerManager(application: Application) : AndroidViewModel(application
         server?.stop()
         server = null
         clearFileShareRecords()
-        _uiState.value = FileShareUiState()
+        _serverUiState.value = ServerUiState(
+            isConnectionInfoExpanded = _serverUiState.value.isConnectionInfoExpanded
+        )
+        _fileShareUiState.value = FileShareUiState()
         _chatUiState.value = ChatUiState()
     }
 
@@ -480,6 +488,12 @@ class FileServerManager(application: Application) : AndroidViewModel(application
             _trustedDeviceUiState.update { state ->
                 state.copy(namingDevice = null)
             }
+        }
+    }
+
+    fun toggleConnectionInfoExpanded() {
+        _serverUiState.update { state ->
+            state.copy(isConnectionInfoExpanded = !state.isConnectionInfoExpanded)
         }
     }
 

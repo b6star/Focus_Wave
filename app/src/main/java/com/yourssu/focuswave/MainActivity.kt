@@ -83,9 +83,9 @@ import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontStyle
@@ -94,6 +94,26 @@ import com.yourssu.focuswave.ui.theme.WhiteText100
 import com.yourssu.focuswave.util.rememberCurrentDateText
 import com.yourssu.focuswave.util.rememberCurrentTimeStatusText
 import com.yourssu.focuswave.util.rememberCurrentTimeText
+import kotlinx.coroutines.delay
+
+private const val AOD_BACKGROUND_CHANGE_INTERVAL_MILLIS = 5 * 60 * 1000L
+
+private val TIMER_BACKGROUNDS = listOf(
+    R.drawable.bg_timer_milkyway,
+    R.drawable.bg_aod_milkyway2,
+    R.drawable.bg_aod_milkyway,
+)
+
+private val AOD_BACKGROUNDS = listOf(
+    R.drawable.bg_aod_aurora,
+    R.drawable.bg_aod_aurora2,
+    R.drawable.bg_aod_aurora3,
+    R.drawable.bg_aod_aurora4,
+    R.drawable.bg_aod_aurora5,
+    R.drawable.bg_aod_aurora6,
+    R.drawable.bg_aod_aurora7
+
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -119,7 +139,8 @@ fun MainScreen(
     fileServerManager: FileServerManager = viewModel()
 ) {
     val timerUiState by focusViewModel.uiState.collectAsState()
-    val fileShareUiState by fileServerManager.uiState.collectAsState()
+    val serverUiState by fileServerManager.serverUiState.collectAsState()
+    val fileShareUiState by fileServerManager.fileShareUiState.collectAsState()
     var showFileShare by rememberSaveable { mutableStateOf(false) }
     var showChat by rememberSaveable { mutableStateOf(false) }
 
@@ -152,8 +173,8 @@ fun MainScreen(
 
 
 
-    DisposableEffect(timerUiState.isRunning, fileShareUiState.isRunning) {
-        if (timerUiState.isRunning || fileShareUiState.isRunning) {
+    DisposableEffect(timerUiState.isRunning, serverUiState.isRunning) {
+        if (timerUiState.isRunning || serverUiState.isRunning) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -196,18 +217,21 @@ fun MainScreen(
 
         if (showFileShare) {
             FileShareOverlay(
-                uiState = fileShareUiState,
+                serverUiState = serverUiState,
+                fileShareUiState = fileShareUiState,
                 onStartClick = fileServerManager::startServer,
                 onStopClick = fileServerManager::stopServer,
+                onConnectionInfoToggle = fileServerManager::toggleConnectionInfoExpanded,
                 onDismiss = { showFileShare = false }
             )
         }
 
         if (showChat) {
             ChatOverlay(
-                uiState = fileShareUiState,
+                serverUiState = serverUiState,
                 onStartClick = fileServerManager::startServer,
                 onStopClick = fileServerManager::stopServer,
+                onConnectionInfoToggle = fileServerManager::toggleConnectionInfoExpanded,
                 onDismiss = { showChat = false }
             )
         }
@@ -241,13 +265,14 @@ private fun MainScreenContent(
     FocusScreen(
         focusMode = focusMode,
         uiState = timerUiState,
-        modeHeader = {
+        modeHeader = { onRefreshAodBackground, onRefreshTimerBackground ->
             if (focusMode == MainActivity.TIMER_MODE) {
                 TimerControlsPanel(
                     uiState = timerUiState,
                     onStartClick = onStartClick,
                     onPauseClick = onPauseClick,
-                    onResetClick = onResetClick,
+                    onResetClick = { onResetClick()
+                        onRefreshTimerBackground() },
                     onChangeModeClick = onChangeModeClick,
                     onNewPathClick = onNewPathClick,
                     onDecreaseFocus = onDecreaseFocus,
@@ -255,7 +280,8 @@ private fun MainScreenContent(
                 )
             } else {
                 AodPanel(
-                    onChangeModeClick = onChangeModeClick
+                    onChangeModeClick = onChangeModeClick,
+                    onRefreshBackgroundClick = onRefreshAodBackground
                 )
             }
         },
@@ -288,19 +314,20 @@ private fun MainScreenContent(
 private fun FocusScreen(
     focusMode: String,
     uiState: TimerUiState,
-    modeHeader: @Composable () -> Unit,
+    modeHeader: @Composable (
+        onRefreshAodBackground: () -> Unit,
+        onRefreshTimerBackground: () -> Unit
+    ) -> Unit,
     countdownOverlay: @Composable () -> Unit,
     soundMixerPanel: @Composable () -> Unit,
     bottomNavigation: @Composable () -> Unit = {},
     fileShareOverlay: @Composable () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val backgroundState = rememberFocusBackground(focusMode)
+
     Box(modifier = modifier.fillMaxSize()) {
-        if (focusMode == MainActivity.TIMER_MODE) {
-            FocusScene(bgImagePath = R.drawable.grok_space_03)
-        } else {
-            FocusScene(bgImagePath = R.drawable.bg_son_na_eun, overlayDarkness = 0.5f)
-        }
+        FocusScene(bgImagePath = backgroundState.selectedBackground, overlayDarkness = 0.5f)
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
@@ -324,7 +351,10 @@ private fun FocusScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(sectionGap)
                 ) {
-                    modeHeader()
+                    modeHeader(
+                        backgroundState.refreshAodBackground,
+                        backgroundState.refreshTimerBackground
+                    )
                     if (focusMode == MainActivity.TIMER_MODE) {
 
                         OrbitSection(
@@ -354,6 +384,74 @@ private fun FocusScreen(
         countdownOverlay()
         fileShareOverlay()
     }
+}
+
+private data class FocusBackgroundState(
+    val selectedBackground: Int,
+    val refreshAodBackground: () -> Unit,
+    val refreshTimerBackground: () -> Unit
+)
+@Composable
+private fun rememberFocusBackground(focusMode: String): FocusBackgroundState {
+    var selectedTimerBackground by rememberSaveable {
+        mutableIntStateOf(TIMER_BACKGROUNDS.random())
+    }
+    var selectedAodBackground by rememberSaveable {
+        mutableIntStateOf(AOD_BACKGROUNDS.random())
+    }
+    var lastAodBackgroundChangedAt by rememberSaveable {
+        mutableStateOf(System.currentTimeMillis())
+    }
+
+    fun refreshTimerBackground() {
+        selectedTimerBackground = TIMER_BACKGROUNDS
+            .filter { it != selectedTimerBackground }
+            .ifEmpty { TIMER_BACKGROUNDS }
+            .random()
+    }
+
+    fun refreshAodBackground() {
+        selectedAodBackground = AOD_BACKGROUNDS
+            .filter { it != selectedAodBackground }
+            .ifEmpty { AOD_BACKGROUNDS }
+            .random()
+        lastAodBackgroundChangedAt = System.currentTimeMillis()
+    }
+
+    LaunchedEffect(focusMode) {
+        if (focusMode == MainActivity.TIMER_MODE) {
+            if (selectedTimerBackground !in TIMER_BACKGROUNDS) {
+                selectedTimerBackground = TIMER_BACKGROUNDS.first()
+            }
+            return@LaunchedEffect
+        }
+
+        if (selectedAodBackground !in AOD_BACKGROUNDS) {
+            selectedAodBackground = AOD_BACKGROUNDS.first()
+            lastAodBackgroundChangedAt = System.currentTimeMillis()
+        }
+
+        while (true) {
+            val elapsed = System.currentTimeMillis() - lastAodBackgroundChangedAt
+            val remaining = (AOD_BACKGROUND_CHANGE_INTERVAL_MILLIS - elapsed)
+                .coerceAtLeast(0L)
+
+            delay(remaining)
+            refreshAodBackground()
+        }
+    }
+
+    val resultBg = if (focusMode == MainActivity.TIMER_MODE) {
+        selectedTimerBackground
+    } else {
+        selectedAodBackground
+    }
+
+    return FocusBackgroundState(
+        selectedBackground = resultBg,
+        refreshAodBackground = ::refreshAodBackground,
+        refreshTimerBackground = ::refreshTimerBackground
+    )
 }
 
 @Composable
@@ -398,6 +496,7 @@ private fun FocusScene(
 @Composable
 private fun AodPanel(
     onChangeModeClick: () -> Unit,
+    onRefreshBackgroundClick: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -433,6 +532,10 @@ private fun AodPanel(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                CompactIconButton(
+                    icon = Icons.Default.Refresh,
+                    onClick = onRefreshBackgroundClick
+                )
                 CompactIconButton(
                     icon = Icons.Default.SwapHoriz,
                     onClick = onChangeModeClick
@@ -539,7 +642,7 @@ private fun TimerControlsPanel(
                     modifier = Modifier.size(22.dp)
                 )
                 Text(
-                    text = "FOCUS",
+                    text = "Focus",
                     color = Color.White.copy(alpha = 0.92f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
@@ -889,7 +992,7 @@ fun MainScreenPreview() {
     FocusWaveTheme {
         FocusScreen(
             uiState = previewState,
-            modeHeader = {
+            modeHeader = { onRefreshAodBg, onRefreshTimerBg ->
                 TimerControlsPanel(
                     uiState = previewState,
                     onStartClick = {},

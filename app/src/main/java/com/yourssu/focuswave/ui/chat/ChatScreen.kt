@@ -57,7 +57,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
 import com.yourssu.focuswave.ui.state.ChatMessageUi
-import com.yourssu.focuswave.ui.state.FileShareUiState
+import com.yourssu.focuswave.ui.state.ServerUiState
 import com.yourssu.focuswave.ui.theme.WhiteText85
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -65,15 +65,16 @@ import java.util.Locale
 
 @Composable
 fun ChatOverlay(
-    uiState: FileShareUiState,
+    serverUiState: ServerUiState,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
+    onConnectionInfoToggle: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val fileServerManager: FileServerManager = viewModel()
     val chatUiState by fileServerManager.chatUiState.collectAsState()
-    val pcAccessUrl = uiState.serverAddress.orEmpty()
+    val pcAccessUrl = serverUiState.serverAddress.orEmpty()
     var draft by remember { mutableStateOf("") }
     var detailMessage by remember { mutableStateOf<ChatMessageUi?>(null) }
 
@@ -99,10 +100,11 @@ fun ChatOverlay(
             ChatHeader(onDismiss = onDismiss)
 
             ChatServerPanel(
-                uiState = uiState,
+                uiState = serverUiState,
                 pcAccessUrl = pcAccessUrl,
                 onStartClick = onStartClick,
                 onStopClick = onStopClick,
+                onConnectionInfoToggle = onConnectionInfoToggle,
                 onRefreshClick = fileServerManager::regenerateAuthCode
             )
 
@@ -177,7 +179,7 @@ fun ChatOverlay(
                             draft = ""
                         }
                     },
-                    enabled = uiState.isRunning && draft.isNotBlank(),
+                    enabled = serverUiState.isRunning && draft.isNotBlank(),
                     modifier = Modifier.size(48.dp),
                     shape = CircleShape,
                     contentPadding = PaddingValues(0.dp),
@@ -239,14 +241,13 @@ private fun ChatHeader(
 
 @Composable
 private fun ChatServerPanel(
-    uiState: FileShareUiState,
+    uiState: ServerUiState,
     pcAccessUrl: String,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
+    onConnectionInfoToggle: () -> Unit,
     onRefreshClick: () -> Unit
 ) {
-    var isExpanded by remember { mutableStateOf(true) }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -310,21 +311,21 @@ private fun ChatServerPanel(
             )
 
             IconButton(
-                onClick = { isExpanded = !isExpanded }
+                onClick = onConnectionInfoToggle
             ) {
                 Icon(
-                    imageVector = if (isExpanded) {
+                    imageVector = if (uiState.isConnectionInfoExpanded) {
                         Icons.Default.KeyboardArrowUp
                     } else {
                         Icons.Default.KeyboardArrowDown
                     },
-                    contentDescription = if (isExpanded) "접기" else "펼치기",
+                    contentDescription = if (uiState.isConnectionInfoExpanded) "접기" else "펼치기",
                     tint = Color.White.copy(alpha = 0.7f)
                 )
             }
         }
 
-        if (isExpanded) {
+        if (uiState.isConnectionInfoExpanded) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically

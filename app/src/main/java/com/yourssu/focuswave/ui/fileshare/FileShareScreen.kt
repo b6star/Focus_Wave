@@ -55,6 +55,7 @@ import com.yourssu.focuswave.server.LocalServer
 import com.yourssu.focuswave.server.model.SharedSourceIdentity
 import com.yourssu.focuswave.ui.theme.WhiteText85
 import com.yourssu.focuswave.ui.state.FileShareUiState
+import com.yourssu.focuswave.ui.state.ServerUiState
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -80,9 +81,11 @@ data class SharedFileUi(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FileShareOverlay(
-    uiState: FileShareUiState,
+    serverUiState: ServerUiState,
+    fileShareUiState: FileShareUiState,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
+    onConnectionInfoToggle: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -122,7 +125,7 @@ fun FileShareOverlay(
     }
 
     val clipboardManager = LocalClipboardManager.current
-    val pcAccessUrl = uiState.serverAddress.orEmpty()
+    val pcAccessUrl = serverUiState.serverAddress.orEmpty()
 
     val pagerState = rememberPagerState(pageCount = { 2 })
     val coroutineScope = rememberCoroutineScope()
@@ -161,7 +164,7 @@ fun FileShareOverlay(
         }
     }
 
-    LaunchedEffect(uiState.filesRevision) {
+    LaunchedEffect(fileShareUiState.filesRevision) {
         refreshSharedFiles(showMessage = false)
     }
 
@@ -201,13 +204,14 @@ fun FileShareOverlay(
 
             // 서버 정보
             FileShareServerCard(
-                uiState = uiState,
+                uiState = serverUiState,
                 pcAccessUrl = pcAccessUrl,
                 onStartClick = onStartClick,
                 onStopClick = {
                     onStopClick()
                     selectedFiles = emptyList()
                 },
+                onConnectionInfoToggle = onConnectionInfoToggle,
                 onRefreshClick = fileServerManager::regenerateAuthCode
             )
 
@@ -286,7 +290,7 @@ fun FileShareOverlay(
 
                         1 -> UploadSection(
                             selectedFiles = selectedFiles,
-                            isServerRunning = uiState.isRunning,
+                            isServerRunning = serverUiState.isRunning,
                             sendProgressMap = sendProgressMap,
                             onPickFileClick = {
                                 filePickerLauncher.launch(arrayOf("*/*"))
@@ -558,14 +562,13 @@ private fun HeaderSection(
 
 @Composable
 private fun FileShareServerCard(
-    uiState: FileShareUiState,
+    uiState: ServerUiState,
     pcAccessUrl: String,
     onStartClick: () -> Unit,
     onStopClick: () -> Unit,
+    onConnectionInfoToggle: () -> Unit,
     onRefreshClick: () -> Unit
 ) {
-    var isExpanded by remember { mutableStateOf(true) }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -628,21 +631,21 @@ private fun FileShareServerCard(
             )
 
             IconButton(
-                onClick = { isExpanded = !isExpanded }
+                onClick = onConnectionInfoToggle
             ) {
                 Icon(
-                    imageVector = if (isExpanded) {
+                    imageVector = if (uiState.isConnectionInfoExpanded) {
                         Icons.Default.KeyboardArrowUp
                     } else {
                         Icons.Default.KeyboardArrowDown
                     },
-                    contentDescription = if (isExpanded) "접기" else "펼치기",
+                    contentDescription = if (uiState.isConnectionInfoExpanded) "접기" else "펼치기",
                     tint = Color.White.copy(alpha = 0.7f)
                 )
             }
         }
 
-        if (isExpanded) {
+        if (uiState.isConnectionInfoExpanded) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
