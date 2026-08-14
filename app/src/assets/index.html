@@ -335,9 +335,21 @@
 
         .chat-message-row { display: flex; }
         .chat-message-row.mine { justify-content: flex-end; }
+        .chat-stack {
+            max-width: min(72%, 460px);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .chat-message-row.mine .chat-stack { align-items: flex-end; }
+        .chat-sender {
+            padding: 0 4px;
+            color: var(--dim);
+            font-size: 11px;
+            font-weight: 700;
+        }
 
         .chat-bubble {
-            max-width: min(72%, 460px);
             padding: 10px 13px;
             border-radius: 12px;
             background: var(--panel);
@@ -346,6 +358,7 @@
             font-size: 13px;
             line-height: 1.5;
             overflow-wrap: anywhere;
+            cursor: pointer;
         }
 
         .chat-message-row.mine .chat-bubble {
@@ -391,7 +404,7 @@
         @media (max-width: 560px) {
             body { padding: 24px 14px 40px; }
             .card { padding: 18px; }
-            .chat-bubble { max-width: 84%; }
+            .chat-stack { max-width: 84%; }
         }
     </style>
 </head>
@@ -518,11 +531,14 @@
     let clientPublicKey = null;
     let aesKeyBytes = null;
     let trustedDeviceEvents = null;
+    let chatEvents = null;
+    let mySenderId = getOrCreateChatClientId();
     let trustedDeviceClaimInProgress = false;
     const textEncoder = new TextEncoder();
     const textDecoder = new TextDecoder();
 
     const downloadState = {};
+    const renderedChatMessageIds = new Set();
     let chatMessageId = 1;
 
     function updateDownloadBtnUI(fileName) {
@@ -561,6 +577,19 @@
         const bytes = new Uint8Array(length);
         crypto.getRandomValues(bytes);
         return bytes;
+    }
+
+    function getOrCreateChatClientId() {
+        const storageKey = "focuswave-chat-client-id";
+        const existingId = localStorage.getItem(storageKey);
+        if (existingId) return existingId;
+
+        const newId = `web-${bytesToBase64(randomBytes(24))
+            .replaceAll("+", "-")
+            .replaceAll("/", "_")
+            .replaceAll("=", "")}`;
+        localStorage.setItem(storageKey, newId);
+        return newId;
     }
 
     function deriveAesKey(sharedSecret) {
@@ -658,6 +687,33 @@
             encryptedBlob: new Blob([encryptedBytes]),
             nonceBase64: bytesToBase64(nonce)
         };
+    }
+
+    function encryptChatText(message) {
+        if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
+
+        const nonce = randomBytes(16);
+        const aes = cbc(aesKeyBytes, nonce);
+        const encryptedBytes = aes.encrypt(textEncoder.encode(JSON.stringify({
+            clientId: mySenderId,
+            message
+        })));
+
+        return {
+            nonceBase64: bytesToBase64(nonce),
+            encryptedBase64: bytesToBase64(encryptedBytes)
+        };
+    }
+
+    function decryptChatJson(nonceBase64, encryptedBase64) {
+        if (!aesKeyBytes) throw new Error("암호화 키가 없습니다.");
+
+        const nonce = base64ToBytes(nonceBase64);
+        const encryptedBytes = base64ToBytes(encryptedBase64);
+        const aes = cbc(aesKeyBytes, nonce);
+        const plainBytes = aes.decrypt(encryptedBytes);
+
+        return JSON.parse(textDecoder.decode(plainBytes));
     }
 
     function pkcs7Unpad(data) {
@@ -797,6 +853,7 @@
             });
 
             if (response.ok) {
+                await response.json();
                 authStatus.innerText = "보안 연결 설정 중...";
                 await setupEncryption();
                 enterAuthenticatedState();
@@ -847,6 +904,8 @@
         }, 2000);
 
         startTrustedDeviceEvents();
+        startChatEvents();
+        fetchChatMessages();
     }
 
     async function tryTrustedAuth() {
@@ -861,6 +920,7 @@
                 return false;
             }
 
+            await response.json();
             await setupEncryption();
             enterAuthenticatedState();
             console.info("Trusted auth succeeded");
@@ -1097,6 +1157,10 @@
             trustedDeviceEvents.close();
             trustedDeviceEvents = null;
         }
+        if (chatEvents !== null) {
+            chatEvents.close();
+            chatEvents = null;
+        }
 
         if (fileListRefreshTimer !== null) {
             clearInterval(fileListRefreshTimer);
@@ -1134,22 +1198,23 @@
         const chatStatus = document.getElementById('chatStatus');
 
         chatMessageId = 1;
+        renderedChatMessageIds.clear();
 
         if (chatInput) chatInput.value = "";
         if (chatStatus) chatStatus.innerText = "";
 
         if (chatMessages) {
             chatMessages.innerHTML = "";
-            appendChatMessage("채팅 연결 준비 중입니다.", false);
+            appendChatPlaceholder("채팅 연결 준비 중입니다.");
         }
     }
 
-    function appendChatMessage(text, isMine) {
+    function appendChatPlaceholder(text) {
         const chatMessages = document.getElementById('chatMessages');
         if (!chatMessages) return;
 
         const row = document.createElement('div');
-        row.className = isMine ? "chat-message-row mine" : "chat-message-row";
+        row.className = "chat-message-row";
         row.dataset.messageId = String(chatMessageId++);
 
         const bubble = document.createElement('div');
@@ -1161,7 +1226,81 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
     }
 
-    function sendChatMessage() {
+    function appendChatMessage(message) {
+        const chatMessages = document.getElementById('chatMessages');
+        if (!chatMessages) return;
+        if (message.id && renderedChatMessageIds.has(message.id)) return;
+        if (message.id) renderedChatMessageIds.add(message.id);
+
+        const isMine = message.senderId === mySenderId;
+        const row = document.createElement('div');
+        row.className = isMine ? "chat-message-row mine" : "chat-message-row";
+        row.dataset.messageId = message.id || String(chatMessageId++);
+
+        const stack = document.createElement('div');
+        stack.className = "chat-stack";
+
+        if (!isMine) {
+            const sender = document.createElement('div');
+            sender.className = "chat-sender";
+            sender.textContent = message.senderName || "Unknown";
+            stack.appendChild(sender);
+        }
+
+        const bubble = document.createElement('div');
+        bubble.className = "chat-bubble";
+        bubble.textContent = message.message || "";
+        bubble.onclick = () => showChatMessageDetail(message);
+
+        stack.appendChild(bubble);
+        row.appendChild(stack);
+        chatMessages.appendChild(row);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function showChatMessageDetail(message) {
+        const timeText = message.sentAtMillis
+            ? new Date(message.sentAtMillis).toLocaleString()
+            : "-";
+        alert(
+            `이름: ${message.senderName || "-"}\n` +
+            `IP: ${message.senderIpAddress || "-"}\n` +
+            `환경: ${message.senderUserAgent || "-"}\n` +
+            `순서: ${message.sequence || "-"}\n` +
+            `서버 수신 시간: ${timeText}`
+        );
+    }
+
+    async function fetchChatMessages() {
+        const chatMessages = document.getElementById('chatMessages');
+        const chatStatus = document.getElementById('chatStatus');
+
+        try {
+            const response = await fetch("/chat/messages", {
+                method: "GET",
+                credentials: "same-origin"
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const envelope = await response.json();
+            const messages = decryptChatJson(envelope.nonce, envelope.payload);
+
+            if (chatMessages) chatMessages.innerHTML = "";
+            renderedChatMessageIds.clear();
+            if (messages.length === 0) {
+                appendChatPlaceholder("아직 메시지가 없습니다.");
+            } else {
+                messages.forEach(appendChatMessage);
+            }
+            if (chatStatus) chatStatus.innerText = "채팅 연결됨";
+        } catch (error) {
+            console.error("채팅 목록 로드 실패:", error);
+            if (chatStatus) chatStatus.innerText = "채팅 목록을 불러오지 못했습니다.";
+        }
+    }
+
+    async function sendChatMessage() {
         if (!isAuthenticated) {
             alert("먼저 인증 코드를 입력해주세요.");
             return;
@@ -1174,12 +1313,59 @@
         const message = chatInput.value.trim();
         if (!message) return;
 
-        appendChatMessage(message, true);
-        chatInput.value = "";
+        try {
+            const encryptedMessage = encryptChatText(message);
 
-        if (chatStatus) {
-            chatStatus.innerText = "채팅 서버 API 연결 전입니다. 현재 화면에만 표시됩니다.";
+            const response = await fetch("/chat/send", {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    nonce: encryptedMessage.nonceBase64,
+                    message: encryptedMessage.encryptedBase64
+                })
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            chatInput.value = "";
+            if (chatStatus) chatStatus.innerText = "전송됨";
+        } catch (error) {
+            console.error("채팅 전송 실패:", error);
+            if (chatStatus) chatStatus.innerText = "메시지 전송 실패";
         }
+    }
+
+    function startChatEvents() {
+        if (chatEvents !== null) {
+            chatEvents.close();
+        }
+
+        chatEvents = new EventSource("/chat/events");
+
+        chatEvents.onopen = () => {
+            const chatStatus = document.getElementById('chatStatus');
+            if (chatStatus) chatStatus.innerText = "채팅 실시간 연결됨";
+        };
+
+        chatEvents.addEventListener("chat-message", (event) => {
+            try {
+                const envelope = JSON.parse(event.data);
+                const message = decryptChatJson(envelope.nonce, envelope.payload);
+                const chatMessages = document.getElementById('chatMessages');
+                if (chatMessages && chatMessages.textContent === "아직 메시지가 없습니다.") {
+                    chatMessages.innerHTML = "";
+                }
+                appendChatMessage(message);
+            } catch (error) {
+                console.error("채팅 이벤트 처리 실패:", error);
+            }
+        });
+
+        chatEvents.onerror = () => {
+            const chatStatus = document.getElementById('chatStatus');
+            if (chatStatus) chatStatus.innerText = "채팅 실시간 연결 끊김";
+        };
     }
 
     function startTrustedDeviceEvents() {

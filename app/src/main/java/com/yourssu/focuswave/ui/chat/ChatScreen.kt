@@ -3,10 +3,11 @@ package com.yourssu.focuswave.ui.chat
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
@@ -14,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -24,12 +24,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ElevatedButton
 import androidx.compose.material3.HorizontalDivider
@@ -42,25 +44,24 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import com.yourssu.focuswave.ui.theme.WhiteText85
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yourssu.focuswave.server.FileServerManager
+import com.yourssu.focuswave.ui.state.ChatMessageUi
 import com.yourssu.focuswave.ui.state.FileShareUiState
-
-private data class ChatMessageUi(
-    val id: Int,
-    val text: String,
-    val isMine: Boolean
-)
+import com.yourssu.focuswave.ui.theme.WhiteText85
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun ChatOverlay(
@@ -71,19 +72,10 @@ fun ChatOverlay(
     modifier: Modifier = Modifier
 ) {
     val fileServerManager: FileServerManager = viewModel()
+    val chatUiState by fileServerManager.chatUiState.collectAsState()
     val pcAccessUrl = uiState.serverAddress.orEmpty()
     var draft by remember { mutableStateOf("") }
-    var messages by remember {
-        mutableStateOf(
-            listOf(
-                ChatMessageUi(
-                    id = 1,
-                    text = "로컬 네트워크 채팅 준비됨",
-                    isMine = false
-                )
-            )
-        )
-    }
+    var detailMessage by remember { mutableStateOf<ChatMessageUi?>(null) }
 
     Box(
         modifier = modifier
@@ -123,8 +115,29 @@ fun ChatOverlay(
                     .padding(horizontal = 10.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(messages, key = { it.id }) { message ->
-                    ChatBubble(message = message)
+                if (chatUiState.messages.isEmpty()) {
+                    item {
+                        ChatBubble(
+                            message = ChatMessageUi(
+                                id = "empty",
+                                sequence = 0L,
+                                senderName = "Focus Wave",
+                                senderIpAddress = null,
+                                senderUserAgent = null,
+                                text = "채팅 연결 준비 중입니다.",
+                                sentAtMillis = 0L,
+                                isMine = false
+                            ),
+                            onClick = {}
+                        )
+                    }
+                }
+
+                items(chatUiState.messages, key = { it.id }) { message ->
+                    ChatBubble(
+                        message = message,
+                        onClick = { detailMessage = message }
+                    )
                 }
             }
 
@@ -160,15 +173,11 @@ fun ChatOverlay(
                     onClick = {
                         val text = draft.trim()
                         if (text.isNotEmpty()) {
-                            messages = messages + ChatMessageUi(
-                                id = (messages.maxOfOrNull { it.id } ?: 0) + 1,
-                                text = text,
-                                isMine = true
-                            )
+                            fileServerManager.sendChatMessage(text)
                             draft = ""
                         }
                     },
-                    enabled = draft.isNotBlank(),
+                    enabled = uiState.isRunning && draft.isNotBlank(),
                     modifier = Modifier.size(48.dp),
                     shape = CircleShape,
                     contentPadding = PaddingValues(0.dp),
@@ -188,6 +197,13 @@ fun ChatOverlay(
             }
         }
     }
+
+    detailMessage?.let { message ->
+        ChatMessageDetailDialog(
+            message = message,
+            onDismiss = { detailMessage = null }
+        )
+    }
 }
 
 @Composable
@@ -205,7 +221,7 @@ private fun ChatHeader(
                 style = MaterialTheme.typography.titleLarge
             )
             Text(
-                text = "같은 Wi-Fi에서 임시로 주고받는 메시지",
+                text = "같은 네트워크에서 주고받는 임시 채팅",
                 color = Color.White.copy(alpha = 0.62f),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -267,7 +283,7 @@ private fun ChatServerPanel(
                 Icon(
                     imageVector = Icons.Default.PowerSettingsNew,
                     contentDescription = if (uiState.isRunning) "서버 중지" else "서버 시작",
-                    tint = if (uiState.isRunning) Color(0xFF8BE9A8).copy(alpha = 1f) else Color.White.copy(alpha = 0.5f)
+                    tint = if (uiState.isRunning) Color(0xFF8BE9A8) else Color.White.copy(alpha = 0.5f)
                 )
             }
         }
@@ -359,7 +375,7 @@ private fun ChatServerPanel(
             }
 
             Text(
-                text = "PC 브라우저에서 위 주소로 접속한 뒤 인증코드를 입력하세요.",
+                text = "PC 브라우저에서 위 주소로 접속한 뒤 인증 코드를 입력하세요.",
                 color = Color.White.copy(alpha = 0.55f),
                 style = MaterialTheme.typography.bodySmall
             )
@@ -369,30 +385,77 @@ private fun ChatServerPanel(
 
 @Composable
 private fun ChatBubble(
-    message: ChatMessageUi
+    message: ChatMessageUi,
+    onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.isMine) Arrangement.End else Arrangement.Start
     ) {
-        Surface(
+        Column(
             modifier = Modifier.widthIn(max = 280.dp),
-            shape = RoundedCornerShape(
-                topStart = 18.dp,
-                topEnd = 18.dp,
-                bottomStart = if (message.isMine) 18.dp else 4.dp,
-                bottomEnd = if (message.isMine) 4.dp else 18.dp
-            ),
-            color = if (message.isMine) Color(0xFF8A86E6) else Color.White.copy(alpha = 0.12f),
-            tonalElevation = 0.dp,
-            shadowElevation = 0.dp
+            horizontalAlignment = if (message.isMine) Alignment.End else Alignment.Start,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Text(
-                text = message.text,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                color = WhiteText85,
-                style = MaterialTheme.typography.bodyMedium
-            )
+            if (!message.isMine) {
+                Text(
+                    text = message.senderName,
+                    color = Color.White.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+
+            Surface(
+                modifier = Modifier.clickable(onClick = onClick),
+                shape = RoundedCornerShape(
+                    topStart = 18.dp,
+                    topEnd = 18.dp,
+                    bottomStart = if (message.isMine) 18.dp else 4.dp,
+                    bottomEnd = if (message.isMine) 4.dp else 18.dp
+                ),
+                color = if (message.isMine) Color(0xFF8A86E6) else Color.White.copy(alpha = 0.12f),
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp
+            ) {
+                Text(
+                    text = message.text,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    color = WhiteText85,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun ChatMessageDetailDialog(
+    message: ChatMessageUi,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("확인")
+            }
+        },
+        title = {
+            Text("메시지 정보")
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("이름: ${message.senderName}")
+                Text("IP: ${message.senderIpAddress ?: "-"}")
+                Text("환경: ${message.senderUserAgent ?: "-"}")
+                Text("순서: ${message.sequence}")
+                Text("서버 수신 시간: ${message.sentAtMillis.toReadableTime()}")
+            }
+        }
+    )
+}
+
+private fun Long.toReadableTime(): String {
+    if (this <= 0L) return "-"
+    return SimpleDateFormat("yyyy-MM-dd h:mm:ss a", Locale.US).format(Date(this))
 }
