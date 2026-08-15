@@ -44,7 +44,7 @@ data class TimerUiState(
         }
 
     val canEditDurations: Boolean
-        get() = !isRunning
+        get() = !isRunning && phase == TimerPhase.READY
 
     val showBreakCountdown: Boolean
         get() = remainingSeconds in 1..5

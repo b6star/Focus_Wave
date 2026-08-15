@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -42,17 +41,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.yourssu.focuswave.R
 import com.yourssu.focuswave.ui.state.SoundCategoryId
 import com.yourssu.focuswave.ui.state.SoundCategoryUiState
 import com.yourssu.focuswave.ui.state.SoundTrackId
 import com.yourssu.focuswave.ui.theme.WhiteText85
+import com.yourssu.focuswave.util.layoutSpacing
 
 @Composable
 fun SoundMixerPanel(
@@ -62,30 +65,48 @@ fun SoundMixerPanel(
     onEnabledChange: (SoundCategoryId, Boolean) -> Unit,
     onVolumeChange: (SoundCategoryId, Float) -> Unit,
     onTrackSelected: (SoundCategoryId, SoundTrackId) -> Unit,
+    isCompact: Boolean,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(24.dp)
+    val spacing = layoutSpacing(isCompact = isCompact)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(Color(0xCC061425), shape)
-            .border(BorderStroke(1.dp, Color(0xFF66C7FF).copy(alpha = 0.18f)), shape)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .background(
+                brush = Brush.linearGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.14f),
+                        Color(0xFF14213A).copy(alpha = 0.56f),
+                        Color(0xFF07111F).copy(alpha = 0.70f)
+                    )
+                ),
+                shape = shape
+            )
+            .border(
+                BorderStroke(
+                    Dp.Hairline,
+                    Color(0xFFEAF6FF).copy(alpha = 0.22f)
+                ),
+                shape
+            )
+            .padding(vertical = spacing.panelVerticalPadding, horizontal = spacing.panelHorizontalPadding),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth()
+                .padding(start = 4.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
                 text = "SOUND MIXER",
-                color = Color.White.copy(alpha = 0.92f),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold
+                color = Color(0xFFEAF6FF).copy(alpha = 0.78f),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.1.sp
             )
-
             IconButton(
                 onClick = onSelectionModeToggle,
                 modifier = Modifier
@@ -101,11 +122,15 @@ fun SoundMixerPanel(
         }
 
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val compact = maxWidth < 420.dp || maxHeight < 300.dp
-            val veryCompact = maxHeight < 230.dp
             val itemSpacing = 12.dp
-            val visibleItemCount = minOf(soundCategories.size, if (compact || veryCompact) 2 else 3).coerceAtLeast(1)
-            val itemWidth = (maxWidth - itemSpacing * (visibleItemCount - 1)) / visibleItemCount
+            val visibleItemCount = minOf(soundCategories.size, maxWidth.div(240.dp).toInt()).coerceAtLeast(1)
+            val baseItemWidth = (maxWidth - itemSpacing * (visibleItemCount - 1)) / visibleItemCount
+            val itemWidth = if (visibleItemCount < soundCategories.size) {
+                baseItemWidth - (itemSpacing + spacing.panelHorizontalPadding) * 2 / visibleItemCount
+            } else {
+                baseItemWidth
+            }
+
 
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(itemSpacing),
@@ -118,6 +143,7 @@ fun SoundMixerPanel(
                     SoundMixerCard(
                         category = category,
                         isSelectionMode = isSelectionMode,
+                        isCompact = isCompact,
                         onEnabledChange = onEnabledChange,
                         onVolumeChange = onVolumeChange,
                         onTrackSelected = onTrackSelected,
@@ -133,11 +159,14 @@ fun SoundMixerPanel(
 private fun SoundMixerCard(
     category: SoundCategoryUiState,
     isSelectionMode: Boolean,
+    isCompact: Boolean,
     onEnabledChange: (SoundCategoryId, Boolean) -> Unit,
     onVolumeChange: (SoundCategoryId, Float) -> Unit,
     onTrackSelected: (SoundCategoryId, SoundTrackId) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val spacing = layoutSpacing(isCompact)
+
     val tileShape = RoundedCornerShape(18.dp)
     val tileBackground = if (category.isEnabled) {
         Color(0xFF0A2A45).copy(alpha = 0.78f)
@@ -145,7 +174,7 @@ private fun SoundMixerCard(
         Color.White.copy(alpha = 0.075f)
     }
     val tileBorder = if (category.isEnabled) {
-        Color(0xFF69CFFF).copy(alpha = 0.36f)
+        Color(0xFF69CFFF).copy(alpha = 0.78f)
     } else {
         Color.White.copy(alpha = 0.12f)
     }
@@ -156,17 +185,23 @@ private fun SoundMixerCard(
         Color.White.copy(alpha = 0.44f)
     }
 
-    val cardHeight = if (isSelectionMode) 205.dp else 115.dp
+    val cardHeightModifier = if (isSelectionMode) {
+        Modifier.height(199.dp)
+    } else {
+        Modifier
+    }
 
-    val backGroundAlpha = if (category.isEnabled) 0.25f else 0.65f
+    val backGroundDarkness = if (category.isEnabled) 0.23f else 0.72f
 
     Box(
         modifier = modifier
-            .height(cardHeight)
+            .then(cardHeightModifier)
             .clip(tileShape)
             .background(tileBackground)
-            .border(BorderStroke(1.dp, tileBorder),
-                tileShape)
+            .border(
+                BorderStroke(Dp.Hairline, tileBorder),
+                tileShape
+            )
             .clickable {
                 onEnabledChange(category.id, !category.isEnabled)
             }
@@ -181,13 +216,13 @@ private fun SoundMixerCard(
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .background(Color.Black.copy(alpha = backGroundAlpha))
+                .background(Color.Black.copy(alpha = backGroundDarkness))
         )
 
         Column(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp)
+                .fillMaxWidth()
+                .padding(spacing.padding)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -249,7 +284,7 @@ private fun SoundMixerCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable { onTrackSelected(category.id, track.id) }
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 4.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
@@ -260,7 +295,17 @@ private fun SoundMixerCard(
                                 style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .background(
+                                        color = Color(0xFF17172A).copy(alpha = if (category.isEnabled) 0.45f else 0f),
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .border(
+                                        width = Dp.Hairline,
+                                        color = Color.White.copy(alpha = if (category.isEnabled) 0.10f else 0f),
+                                        shape = RoundedCornerShape(6.dp)
+                                    )
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
                             )
 
                             if (isSelected) {
@@ -313,7 +358,7 @@ private fun CategoryIcon(
                 SoundCategoryId.Space -> Icons.Default.Public
             },
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.88f),
+            tint = Color.White.copy(alpha = if (category.isEnabled) 0.82f else 0.46f),
             modifier = Modifier.size(19.dp)
         )
     }
