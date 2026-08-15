@@ -7,8 +7,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.delay
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
+import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -40,9 +42,8 @@ fun rememberCurrentTimeText(): String {
 
     LaunchedEffect(Unit) {
         while (true) {
-            currentTimeText =
-                LocalTime.now().format(formatter)
-            delay(1_000L)
+            delay(millisUntilNextMinute())
+            currentTimeText = LocalTime.now().format(formatter)
         }
     }
     return currentTimeText
@@ -60,8 +61,8 @@ fun rememberCurrentDateText(): String {
 
     LaunchedEffect(Unit) {
         while (true) {
+            delay(millisUntilNextDay())
             currentDateText = LocalDate.now().format(formatter).uppercase(Locale.US)
-            delay(60_000L)
         }
     }
 
@@ -69,19 +70,41 @@ fun rememberCurrentDateText(): String {
 }
 
 @Composable
-fun rememberCurrentTimeStatusText(): String {
+fun rememberCurrentTimeStatusText(
+    refreshIntervalMillis: Long,
+    refreshTrigger: Int
+): String {
     var statusText by remember {
         mutableStateOf(currentTimeStatusText())
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(refreshIntervalMillis, refreshTrigger) {
+        statusText = currentTimeStatusText()
         while (true) {
+            delay(millisUntilNextMinuteAfter(refreshIntervalMillis))
             statusText = currentTimeStatusText()
-            delay(60_000L)
         }
     }
 
     return statusText
+}
+
+private fun millisUntilNextMinute(): Long {
+    val now = LocalTime.now()
+    return ((60 - now.second) * 1_000L - now.nano / 1_000_000L)
+        .coerceAtLeast(1L)
+}
+
+private fun millisUntilNextMinuteAfter(delayMillis: Long): Long {
+    val now = LocalTime.now()
+    return (delayMillis.coerceAtLeast(1L) + (60 - now.second) * 1_000L - now.nano / 1_000_000L)
+        .coerceAtLeast(1L)
+}
+
+private fun millisUntilNextDay(): Long {
+    val now = ZonedDateTime.now()
+    val nextDay = now.toLocalDate().plusDays(1).atStartOfDay(now.zone)
+    return Duration.between(now, nextDay).toMillis().coerceAtLeast(1L)
 }
 
 private fun currentTimeStatusText() = when (LocalTime.now().hour) {

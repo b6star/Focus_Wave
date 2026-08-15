@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
@@ -146,7 +147,7 @@ fun OrbitSection(
             centerY = earthCenterY,
             markerSize = markerBoxSize,
             imageSize = earthSize,
-            imageResId = R.drawable.earth,
+            imageResId = R.drawable.earth_low,
             contentDescription = "Earth start point",
             label = "START",
             labelAlignment = Alignment.TopCenter,
@@ -161,7 +162,7 @@ fun OrbitSection(
             centerY = moonCenterY,
             markerSize = markerBoxSize,
             imageSize = moonSize,
-            imageResId = R.drawable.moon,
+            imageResId = R.drawable.moon_low,
             contentDescription = "Moon goal point",
             label = "GOAL",
             labelAlignment = Alignment.BottomCenter,
@@ -216,11 +217,12 @@ private fun JourneyMarker(
             painter = painterResource(id = imageResId),
             contentDescription = contentDescription,
             alpha = imageAlpha,
+            contentScale = ContentScale.Fit,
             modifier = Modifier.size(imageSize)
         )
         Canvas(
             modifier = Modifier
-                .size(imageSize * 0.925f)
+                .size(imageSize)
                 .clip(CircleShape)
         ) {
             val shadowCenter = Offset(
@@ -230,28 +232,19 @@ private fun JourneyMarker(
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        Color.Black.copy(alpha = shadowAlpha),
-                        Color.Black.copy(alpha = shadowAlpha * 0.62f),
+                        Color(0xFF020617).copy(alpha = shadowAlpha * 0.96f),
+                        Color(0xFF11103A).copy(alpha = shadowAlpha * 0.78f),
+                        Color(0xFF2563EB).copy(alpha = shadowAlpha * 0.36f),
+                        Color(0xFF7DD3FC).copy(alpha = shadowAlpha * 0.12f),
                         Color.Transparent
                     ),
                     center = shadowCenter,
-                    radius = size.minDimension * 0.78f
+                    radius = size.minDimension * 0.495f
                 ),
-                radius = size.minDimension * 0.78f,
+                radius = size.minDimension * 0.495f,
                 center = shadowCenter
             )
-            drawCircle(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color.Black.copy(alpha = shadowAlpha * 0.82f)
-                    ),
-                    start = Offset(0f, 0f),
-                    end = Offset(size.width, size.height)
-                ),
-                radius = size.minDimension * 0.58f,
-                center = Offset(size.width / 2f, size.height / 2f)
-            )
+
         }
         Text(
             text = label,

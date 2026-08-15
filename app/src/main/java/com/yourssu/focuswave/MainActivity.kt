@@ -53,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -91,12 +92,15 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontStyle
 import androidx.core.content.edit
 import com.yourssu.focuswave.ui.theme.WhiteText100
+import com.yourssu.focuswave.ui.theme.WhiteText75
+import com.yourssu.focuswave.util.LayoutSpacing
+import com.yourssu.focuswave.util.layoutSpacing
 import com.yourssu.focuswave.util.rememberCurrentDateText
 import com.yourssu.focuswave.util.rememberCurrentTimeStatusText
 import com.yourssu.focuswave.util.rememberCurrentTimeText
 import kotlinx.coroutines.delay
 
-private const val AOD_BACKGROUND_CHANGE_INTERVAL_MILLIS = 5 * 60 * 1000L
+private const val AOD_BACKGROUND_CHANGE_INTERVAL_MILLIS = 60 * 60 * 1000L
 
 private val TIMER_BACKGROUNDS = listOf(
     R.drawable.bg_timer_milkyway,
@@ -114,6 +118,21 @@ private val AOD_BACKGROUNDS = listOf(
     R.drawable.bg_aod_aurora7
 
 )
+
+private fun glassPillColors(active: Boolean): List<Color> =
+    if (active) {
+        listOf(
+            Color.White.copy(alpha = 0.18f),
+            Color(0xFF14213A).copy(alpha = 0.56f),
+            Color(0xFF07111F).copy(alpha = 0.70f)
+        )
+    } else {
+        listOf(
+            Color.White.copy(alpha = 0.14f),
+            Color(0xFF12315A).copy(alpha = 0.68f),
+            Color(0xFF071839).copy(alpha = 0.82f)
+        )
+    }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -174,7 +193,7 @@ fun MainScreen(
 
 
     DisposableEffect(timerUiState.isRunning, serverUiState.isRunning) {
-        if (timerUiState.isRunning || serverUiState.isRunning) {
+        if (timerUiState.isRunning || serverUiState.isRunning || focusMode == MainActivity.AOD_MODE) {
             activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -265,7 +284,7 @@ private fun MainScreenContent(
     FocusScreen(
         focusMode = focusMode,
         uiState = timerUiState,
-        modeHeader = { onRefreshAodBackground, onRefreshTimerBackground ->
+        modeHeader = { onRefreshAodBackground, onRefreshTimerBackground, isCompact, statusRefreshTrigger ->
             if (focusMode == MainActivity.TIMER_MODE) {
                 TimerControlsPanel(
                     uiState = timerUiState,
@@ -276,12 +295,15 @@ private fun MainScreenContent(
                     onChangeModeClick = onChangeModeClick,
                     onNewPathClick = onNewPathClick,
                     onDecreaseFocus = onDecreaseFocus,
-                    onIncreaseFocus = onIncreaseFocus
+                    onIncreaseFocus = onIncreaseFocus,
+                    isCompact = isCompact
                 )
             } else {
                 AodPanel(
                     onChangeModeClick = onChangeModeClick,
-                    onRefreshBackgroundClick = onRefreshAodBackground
+                    onRefreshBackgroundClick = onRefreshAodBackground,
+                    isCompact = isCompact,
+                    statusRefreshTrigger = statusRefreshTrigger
                 )
             }
         },
@@ -291,14 +313,15 @@ private fun MainScreenContent(
                 count = timerUiState.breakCountdownNumber
             )
         },
-        soundMixerPanel = {
+        soundMixerPanel = { isCompact ->
             SoundMixerPanel(
                 soundCategories = timerUiState.soundMixer.categories,
                 isSelectionMode = timerUiState.soundMixer.isSelectionMode,
                 onSelectionModeToggle = onSoundSelectionModeToggle,
                 onEnabledChange = onSoundEnabledChange,
                 onVolumeChange = onSoundVolumeChange,
-                onTrackSelected = onSoundTrackSelected
+                onTrackSelected = onSoundTrackSelected,
+                isCompact = isCompact
             )
         },
         bottomNavigation = {
@@ -316,33 +339,47 @@ private fun FocusScreen(
     uiState: TimerUiState,
     modeHeader: @Composable (
         onRefreshAodBackground: () -> Unit,
-        onRefreshTimerBackground: () -> Unit
+        onRefreshTimerBackground: () -> Unit,
+        isCompact: Boolean,
+        statusRefreshTrigger: Int
     ) -> Unit,
     countdownOverlay: @Composable () -> Unit,
-    soundMixerPanel: @Composable () -> Unit,
+    soundMixerPanel: @Composable (isCompact: Boolean) -> Unit,
     bottomNavigation: @Composable () -> Unit = {},
     fileShareOverlay: @Composable () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val backgroundState = rememberFocusBackground(focusMode)
+    var statusRefreshTrigger by rememberSaveable {
+        mutableIntStateOf(0)
+    }
+    val refreshAodBackground = {
+        backgroundState.refreshAodBackground()
+        statusRefreshTrigger += 1
+    }
 
-    Box(modifier = modifier.fillMaxSize()) {
-        FocusScene(bgImagePath = backgroundState.selectedBackground, overlayDarkness = 0.5f)
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val isCompact = maxHeight < LayoutSpacing.COMPACT_HEIGHT_DP.dp || maxWidth < LayoutSpacing.COMPACT_WIDTH_DP.dp
+        FocusScene(
+            isCompact = isCompact,
+            bgImagePath = backgroundState.selectedBackground,
+            overlayDarkness = 0.5f
+        )
+
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             containerColor = Color.Transparent,
             bottomBar = bottomNavigation
         ) { innerPadding ->
-            BoxWithConstraints(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             ) {
-                val compactHeight = maxHeight < 720.dp
-                val horizontalPadding = if (compactHeight) 18.dp else 26.dp
-                val verticalPadding = if (compactHeight) 2.dp else 4.dp
-                val sectionGap = if (compactHeight) 10.dp else 14.dp
-                val orbitMinHeight = if (compactHeight) 260.dp else 420.dp
+                val horizontalPadding = if (isCompact) 18.dp else 26.dp
+                val verticalPadding = if (isCompact) 2.dp else 4.dp
+                val sectionGap = if (isCompact) 10.dp else 14.dp
+                val orbitMinHeight = if (isCompact) 260.dp else 420.dp
 
                 Column(
                     modifier = Modifier
@@ -352,11 +389,12 @@ private fun FocusScreen(
                     verticalArrangement = Arrangement.spacedBy(sectionGap)
                 ) {
                     modeHeader(
-                        backgroundState.refreshAodBackground,
-                        backgroundState.refreshTimerBackground
+                        refreshAodBackground,
+                        backgroundState.refreshTimerBackground,
+                        isCompact,
+                        statusRefreshTrigger
                     )
                     if (focusMode == MainActivity.TIMER_MODE) {
-
                         OrbitSection(
                             progress = uiState.progress,
                             pathSeed = uiState.pathSeed,
@@ -376,7 +414,7 @@ private fun FocusScreen(
                         )
                     }
 
-                    soundMixerPanel()
+                    soundMixerPanel(isCompact)
                 }
             }
         }
@@ -456,6 +494,7 @@ private fun rememberFocusBackground(focusMode: String): FocusBackgroundState {
 
 @Composable
 private fun FocusScene(
+    isCompact: Boolean,
     modifier: Modifier = Modifier,
     overlayDarkness: Float = 0.5f,
     bgImagePath: Int
@@ -483,7 +522,7 @@ private fun FocusScene(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(20.dp)
+                .padding(layoutSpacing(isCompact).framePadding)
                 .border(
                     BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)),
                     RoundedCornerShape(26.dp)
@@ -496,8 +535,11 @@ private fun FocusScene(
 @Composable
 private fun AodPanel(
     onChangeModeClick: () -> Unit,
-    onRefreshBackgroundClick: () -> Unit
+    onRefreshBackgroundClick: () -> Unit,
+    isCompact: Boolean,
+    statusRefreshTrigger: Int
 ) {
+    val spacing = layoutSpacing(isCompact)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -518,27 +560,29 @@ private fun AodPanel(
                 Icon(
                     imageVector = Icons.Default.AccessTime,
                     contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.92f),
-                    modifier = Modifier.size(22.dp)
+                    tint = WhiteText75,
+                    modifier = Modifier.size(spacing.iconSize)
                 )
                 Text(
                     text = "Always On Display",
-                    color = Color.White.copy(alpha = 0.92f),
-                    style = MaterialTheme.typography.titleMedium,
+                    color = WhiteText75,
+                    style = if (isCompact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
             }
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(spacing.iconSpacing),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CompactIconButton(
                     icon = Icons.Default.Refresh,
-                    onClick = onRefreshBackgroundClick
+                    onClick = onRefreshBackgroundClick,
+                    iconSize = spacing.iconSize
                 )
                 CompactIconButton(
                     icon = Icons.Default.SwapHoriz,
-                    onClick = onChangeModeClick
+                    onClick = onChangeModeClick,
+                    iconSize = spacing.iconSize
                 )
             }
         }
@@ -570,7 +614,7 @@ private fun AodPanel(
                 text = time,
                 color = WhiteText100.copy(alpha = 0.85f),
                 style = MaterialTheme.typography.displayLarge,
-                fontSize = 92.sp,
+                fontSize = if (isCompact) 66.sp else 92.sp,
                 fontWeight = FontWeight.Thin,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.alignByBaseline()
@@ -579,7 +623,7 @@ private fun AodPanel(
                 text = meridiem,
                 color = WhiteText100.copy(alpha = 0.75f),
                 style = MaterialTheme.typography.bodyMedium,
-                fontSize = 66.sp,
+                fontSize = if (isCompact) 46.sp else 66.sp,
                 fontWeight = FontWeight.Thin,
                 modifier = Modifier.alignByBaseline()
             )
@@ -587,8 +631,11 @@ private fun AodPanel(
 
 
 
-        Text(
-            text = rememberCurrentTimeStatusText(),
+        Text(  // 정해진 시간마다 시간별 상태 텍스트를 가져온다, refreshTrigger 는 리셋버튼을 눌렀을 때 즉시 텍스트를 다른 값으로 바꾸기 위함이다.
+            text = rememberCurrentTimeStatusText(
+                refreshIntervalMillis = AOD_BACKGROUND_CHANGE_INTERVAL_MILLIS,
+                refreshTrigger = statusRefreshTrigger
+            ),
             color = Color.White.copy(alpha = 0.72f),
             style = MaterialTheme.typography.headlineSmall,
             fontStyle = FontStyle.Italic,
@@ -604,6 +651,7 @@ private fun AodPanel(
 @Composable
 private fun TimerControlsPanel(
     uiState: TimerUiState,
+    isCompact: Boolean,
     onStartClick: () -> Unit,
     onPauseClick: () -> Unit,
     onResetClick: () -> Unit,
@@ -618,6 +666,8 @@ private fun TimerControlsPanel(
         phase = uiState.phase,
         isRunning = uiState.isRunning
     )
+
+    val spacing = layoutSpacing(isCompact = isCompact)
 
     Column(
         modifier = modifier
@@ -638,27 +688,29 @@ private fun TimerControlsPanel(
                 Icon(
                     imageVector = Icons.Default.GpsFixed,
                     contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.92f),
-                    modifier = Modifier.size(22.dp)
+                    tint = WhiteText75,
+                    modifier = Modifier.size(spacing.iconSize)
                 )
                 Text(
                     text = "Focus",
-                    color = Color.White.copy(alpha = 0.92f),
-                    style = MaterialTheme.typography.titleMedium,
+                    color = WhiteText75,
+                    style = if (isCompact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
             }
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(spacing.iconSpacing),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 CompactIconButton(
                     icon = Icons.Default.Refresh,
-                    onClick = onResetClick
+                    onClick = onResetClick,
+                    iconSize = spacing.iconSize
                 )
                 CompactIconButton(
                     icon = Icons.Default.SwapHoriz,
-                    onClick = onChangeModeClick
+                    onClick = onChangeModeClick,
+                    iconSize = spacing.iconSize
                 )
                 /*
                 CompactIconButton(
@@ -673,8 +725,9 @@ private fun TimerControlsPanel(
         Text(
             text = uiState.formattedTime,
             color = WhiteText100.copy(alpha = 0.85f),
-            style = MaterialTheme.typography.displayLarge,
-            fontSize = 92.sp,
+            style = if (isCompact) { MaterialTheme.typography.titleLarge }
+            else { MaterialTheme.typography.displayLarge },
+            fontSize = if (isCompact) 66.sp else 92.sp,
             fontWeight = FontWeight.Thin,
             letterSpacing = 0.sp,
             textAlign = TextAlign.Center
@@ -683,28 +736,33 @@ private fun TimerControlsPanel(
         Text(
             text = if (uiState.phase == TimerPhase.READY) "Ready for launch" else journeyText,
             color = Color.White.copy(alpha = 0.72f),
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center
+            fontWeight = FontWeight.Thin,
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+            fontStyle = FontStyle.Italic
         )
 
         Row(
-            modifier = Modifier.fillMaxWidth(0.78f),
+            modifier = Modifier.fillMaxWidth(spacing.buttonWidthFraction),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(54.dp)
+            horizontalArrangement = Arrangement.spacedBy(spacing.buttonSpacing)
         ) {
             DurationPill(
                 minutes = uiState.focusMinutes,
                 enabled = uiState.canEditDurations,
+                isCompact = isCompact,
                 onDecrease = onDecreaseFocus,
                 onIncrease = onIncreaseFocus,
                 modifier = Modifier.weight(1f)
             )
             LaunchButton(
                 isRunning = uiState.isRunning,
+                isCompact = isCompact,
+                phase = uiState.phase,
                 onClick = {
                     if (uiState.isRunning) onPauseClick() else onStartClick()
                 },
-                modifier = Modifier.weight(1.06f)
+                modifier = Modifier.weight(1f)
             )
         }
     }
@@ -714,37 +772,43 @@ private fun TimerControlsPanel(
 private fun DurationPill(
     minutes: Int,
     enabled: Boolean,
+    isCompact: Boolean,
     onDecrease: () -> Unit,
     onIncrease: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(28.dp)
-
+    val spacing = layoutSpacing(isCompact)
     Row(
         modifier = modifier
-            .height(60.dp)
+            .height(spacing.buttonHeight)
             .clip(shape)
-            .background(Color(0xCC090D1D))
-            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), shape)
-            .padding(horizontal = 10.dp),
+            .background(
+                brush = Brush.linearGradient(glassPillColors(enabled)),
+                shape = shape
+            )
+            .border(BorderStroke(Dp.Hairline, Color.White.copy(alpha = 0.18f)), shape)
+            .padding(horizontal = spacing.buttonPadding),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         StepperIconButton(
             icon = Icons.Default.Remove,
             enabled = enabled,
+            isCompact = isCompact,
             onClick = onDecrease
         )
         Text(
             text = "$minutes min",
-            color = WhiteText85,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
+            color = WhiteText85.copy(alpha = if (enabled) 1f else 0.53f),
+            style = if (isCompact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1
         )
         StepperIconButton(
             icon = Icons.Default.Add,
             enabled = enabled,
+            isCompact = isCompact,
             onClick = onIncrease
         )
     }
@@ -753,12 +817,14 @@ private fun DurationPill(
 @Composable
 private fun StepperIconButton(
     icon: ImageVector,
+    isCompact: Boolean,
     enabled: Boolean,
     onClick: () -> Unit
 ) {
+    val spacing = layoutSpacing(isCompact)
     Box(
         modifier = Modifier
-            .size(38.dp)
+            .size(34.dp)
             .pointerInput(enabled) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
@@ -794,7 +860,7 @@ private fun StepperIconButton(
             imageVector = icon,
             contentDescription = null,
             tint = Color.White.copy(alpha = if (enabled) 0.88f else 0.28f),
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(spacing.iconSize)
         )
     }
 }
@@ -802,13 +868,18 @@ private fun StepperIconButton(
 @Composable
 private fun LaunchButton(
     isRunning: Boolean,
+    isCompact: Boolean,
+    phase: TimerPhase,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val buttonShape = RoundedCornerShape(32.dp)
+    val spacing = layoutSpacing(isCompact)
+
     ElevatedButton(
         onClick = onClick,
-        modifier = modifier.height(60.dp),
-        shape = RoundedCornerShape(32.dp),
+        modifier = modifier.height(spacing.buttonHeight),
+        shape = buttonShape,
         elevation = ButtonDefaults.elevatedButtonElevation(
             defaultElevation = 0.dp,
             pressedElevation = 0.dp,
@@ -816,30 +887,49 @@ private fun LaunchButton(
             focusedElevation = 0.dp
         ),
         colors = ButtonDefaults.elevatedButtonColors(
-            containerColor = if (isRunning) Color.White.copy(alpha = 0.16f) else Color(0xCC071839),
+            containerColor = Color.Transparent,
             contentColor = Color.White
         ),
-        contentPadding = PaddingValues(horizontal = 18.dp)
+        contentPadding = PaddingValues(0.dp)
     ) {
-        Icon(
-            imageVector = if (isRunning) Icons.Default.Pause else Icons.Default.RocketLaunch,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = if (isRunning) "PAUSE" else "LAUNCH",
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = glassPillColors(isRunning)
+                    ),
+                    shape = buttonShape
+                )
+                .border(BorderStroke(Dp.Hairline, Color.White.copy(alpha = 0.18f)), buttonShape)
+                .padding(horizontal = spacing.buttonPadding),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = if (isRunning) Icons.Default.Pause else Icons.Default.RocketLaunch,
+                contentDescription = null,
+                tint = WhiteText85,
+                modifier = Modifier.size(spacing.iconSize)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (isRunning) { "PAUSE" }
+                else if (phase == TimerPhase.READY) "LAUNCH"
+                else { "RESUME" },
+                color = WhiteText85,
+                style = if (isCompact) MaterialTheme.typography.labelMedium else MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+        }
     }
 }
 
 @Composable
 private fun CompactIconButton(
     icon: ImageVector,
+    iconSize: Dp,
     onClick: () -> Unit
 ) {
     IconButton(
@@ -852,7 +942,7 @@ private fun CompactIconButton(
             imageVector = icon,
             contentDescription = null,
             tint = Color.White.copy(alpha = 0.78f),
-            modifier = Modifier.size(19.dp)
+            modifier = Modifier.size(iconSize)
         )
     }
 }
@@ -992,7 +1082,7 @@ fun MainScreenPreview() {
     FocusWaveTheme {
         FocusScreen(
             uiState = previewState,
-            modeHeader = { onRefreshAodBg, onRefreshTimerBg ->
+            modeHeader = { onRefreshAodBg, onRefreshTimerBg, isCompact, statusRefreshTrigger ->
                 TimerControlsPanel(
                     uiState = previewState,
                     onStartClick = {},
@@ -1001,7 +1091,8 @@ fun MainScreenPreview() {
                     onNewPathClick = {},
                     onIncreaseFocus = {},
                     onDecreaseFocus = {},
-                    onChangeModeClick = {}
+                    onChangeModeClick = {},
+                    isCompact = true
                 )
             },
             countdownOverlay = {},
